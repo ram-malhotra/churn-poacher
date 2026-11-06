@@ -109,47 +109,68 @@ class PipelineRunner:
             sig_res = await db.execute(select(Signal).where(Signal.id == workflow.signal_id))
             signal = sig_res.scalar_one_or_none()
 
-        if not signal and WorkflowStep.LISTENER.value not in completed_steps and not workflow.company_id:
+        if WorkflowStep.LISTENER.value not in completed_steps:
             step_start = time.time()
-            workflow.status = WorkflowState.LISTENER_RUNNING.value
-            workflow.current_step = WorkflowStep.LISTENER.value
-            await db.commit()
+            if not signal and not workflow.company_id:
+                workflow.status = WorkflowState.LISTENER_RUNNING.value
+                workflow.current_step = WorkflowStep.LISTENER.value
+                await db.commit()
 
-            listener = ListenerAgent()
-            include_synth = workflow.input_payload.get("include_synthetic", True)
-            summary = await listener.run_ingestion_cycle(db, include_synthetic=include_synth, max_items_per_source=5)
+                listener = ListenerAgent()
+                include_synth = workflow.input_payload.get("include_synthetic", True)
+                summary = await listener.run_ingestion_cycle(db, include_synthetic=include_synth, max_items_per_source=5)
 
-            # Pick an actionable newly ingested signal
-            target_sig_id = workflow.input_payload.get("signal_id")
-            if target_sig_id:
-                sig_res = await db.execute(select(Signal).where(Signal.id == target_sig_id))
-                signal = sig_res.scalar_one_or_none()
+                # Pick an actionable newly ingested signal
+                target_sig_id = workflow.input_payload.get("signal_id")
+                if target_sig_id:
+                    sig_res = await db.execute(select(Signal).where(Signal.id == target_sig_id))
+                    signal = sig_res.scalar_one_or_none()
 
-            if not signal:
-                # Prioritize signals with identifiable corporate entities over anonymous complaints
-                all_new_sig_query = select(Signal).where(Signal.status == "NEW").order_by(desc(Signal.urgency_score))
-                all_new_sig_res = await db.execute(all_new_sig_query)
-                all_new_signals = all_new_sig_res.scalars().all()
-                for cand_sig in all_new_signals:
-                    ee = cand_sig.extracted_evidence or {}
-                    if ee.get("company_name") or ee.get("domain") or (cand_sig.original_url and "reddit.com" not in cand_sig.original_url and "ycombinator.com" not in cand_sig.original_url):
-                        signal = cand_sig
-                        break
-                if not signal and all_new_signals:
-                    signal = all_new_signals[0]
+                if not signal:
+                    # Prioritize signals with identifiable corporate entities over anonymous complaints
+                    all_new_sig_query = select(Signal).where(Signal.status == "NEW").order_by(desc(Signal.urgency_score))
+                    all_new_sig_res = await db.execute(all_new_sig_query)
+                    all_new_signals = all_new_sig_res.scalars().all()
+                    for cand_sig in all_new_signals:
+                        ee = cand_sig.extracted_evidence or {}
+                        if ee.get("company_name") or ee.get("domain"):
+                            signal = cand_sig
+                            break
+                        cand, _ = EntityResolver.resolve(
+                            title=getattr(cand_sig, 'title', "") or "",
+                            content=cand_sig.raw_content,
+                            author=cand_sig.author_handle,
+                            source_url=cand_sig.original_url,
+                            extracted_evidence=cand_sig.extracted_evidence,
+                        )
+                        if cand:
+                            signal = cand_sig
+                            break
+                    if not signal and all_new_signals:
+                        signal = all_new_signals[0]
 
-            if signal:
-                workflow.signal_id = signal.id
-                workflow.is_synthetic = signal.is_synthetic
+                if signal:
+                    workflow.signal_id = signal.id
+                    workflow.is_synthetic = signal.is_synthetic
 
-            cls._record_step(
-                workflow=workflow,
-                step_name=WorkflowStep.LISTENER.value,
-                status="SUCCESS",
-                duration_ms=int((time.time() - step_start) * 1000),
-                details={"signals_fetched": summary.total_fetched, "new_signals_saved": summary.new_signals_saved, "selected_signal_id": signal.id if signal else None},
-            )
-            await db.commit()
+                cls._record_step(
+                    workflow=workflow,
+                    step_name=WorkflowStep.LISTENER.value,
+                    status="SUCCESS",
+                    duration_ms=int((time.time() - step_start) * 1000),
+                    details={"signals_fetched": summary.total_fetched, "new_signals_saved": summary.new_signals_saved, "selected_signal_id": signal.id if signal else None},
+                )
+                await db.commit()
+            elif signal:
+                # Signal was explicitly targeted for this workflow run
+                cls._record_step(
+                    workflow=workflow,
+                    step_name=WorkflowStep.LISTENER.value,
+                    status="SUCCESS",
+                    duration_ms=0,
+                    details={"source": signal.source, "selected_signal_id": signal.id, "urgency": signal.urgency_score},
+                )
+                await db.commit()
 
         # -------------------------------------------------------------
         # STEP 2: Profiler (Entity Resolution & Tech Profiling)
@@ -191,7 +212,7 @@ class PipelineRunner:
                     details={"reason": "Signal source is anonymous or hobbyist; cannot resolve business entity."},
                 )
                 workflow.status = WorkflowState.REJECTED.value
-                workflow.current_step = WorkflowStep.APPROVAL_GATE.value
+                workflow.current_step = WorkflowStep.PROFILER.value
                 workflow.error_details = "Signal could not be resolved to a corporate entity without hallucination."
                 await db.commit()
                 return
@@ -297,7 +318,7 @@ class PipelineRunner:
                 details={"company_name": company.name, "reason": "ICP Score or Identity Confidence below enterprise qualification threshold."},
             )
             workflow.status = WorkflowState.REJECTED.value
-            workflow.current_step = WorkflowStep.APPROVAL_GATE.value
+            workflow.current_step = WorkflowStep.QUALIFICATION.value
             workflow.error_details = f"Company '{company.name}' was disqualified during ICP qualification. Downstream FinOps and collateral generation skipped."
             await db.commit()
             logger.info(f"Workflow {workflow.id}: Company {company.name} disqualified. Downstream pipeline halted.")
@@ -429,6 +450,16 @@ class PipelineRunner:
         # -------------------------------------------------------------
         # STEP 7: Human Approval Gate (Never automatically bypassed)
         # -------------------------------------------------------------
+        # Strictly verify that all required stages completed and communication drafts were persisted
+        dossier_res = await db.execute(select(DepositionDossier).where(DepositionDossier.id == workflow.dossier_id))
+        dossier = dossier_res.scalar_one_or_none()
+        if not dossier or not dossier.outreach_drafts:
+            raise ValueError("Workflow cannot reach DRAFT_PENDING_APPROVAL: communication drafts were not persisted.")
+
+        drafts_payload = dossier.outreach_drafts
+        if not drafts_payload.get("executive_emails") or not drafts_payload.get("linkedin_sequence"):
+            raise ValueError("Workflow cannot reach DRAFT_PENDING_APPROVAL: executive emails or LinkedIn drafts missing.")
+
         workflow.status = WorkflowState.DRAFT_PENDING_APPROVAL.value
         workflow.current_step = WorkflowStep.APPROVAL_GATE.value
         workflow.completed_at = datetime.now(timezone.utc)
@@ -442,6 +473,22 @@ class PipelineRunner:
             "governance_status": "DRAFT_PENDING_APPROVAL",
             "message": "Pipeline completed successfully. Outreach collateral is awaiting human review.",
         }
+
+        # Formally record Step 7 in step_history
+        cls._record_step(
+            workflow=workflow,
+            step_name=WorkflowStep.APPROVAL_GATE.value,
+            status="PENDING_APPROVAL",
+            duration_ms=0,
+            details={
+                "governance_status": "DRAFT_PENDING_APPROVAL",
+                "dossier_id": workflow.dossier_id,
+                "company_name": company.name,
+                "executive_emails_count": len(drafts_payload.get("executive_emails", [])),
+                "has_linkedin_sequence": bool(drafts_payload.get("linkedin_sequence")),
+                "message": "All pipeline stages successfully completed. Collateral pending human review before export.",
+            },
+        )
         await db.commit()
         logger.info(f"Workflow {workflow.id} completed: Deposition dossier ready in DRAFT_PENDING_APPROVAL.")
 

@@ -81,6 +81,20 @@ async def test_complete_e2e_pipeline_demonstration():
         assert workflow.company_id is not None
         assert workflow.dossier_id is not None
 
+        # Verify all 7 milestone steps were formally recorded
+        step_names = [s["step_name"] for s in workflow.step_history]
+        print(f"[DEMO EXECUTION] Recorded Step History ({len(step_names)} steps): {step_names}")
+        assert len(workflow.step_history) == 7
+        assert step_names == [
+            "LISTENER",
+            "PROFILER",
+            "QUALIFICATION",
+            "FINOPS",
+            "ARCHITECT",
+            "COPYWRITER",
+            "APPROVAL_GATE",
+        ]
+
         # Step 3: Verify Profiled Company
         comp_res = await db.execute(select(Company).where(Company.id == workflow.company_id))
         company = comp_res.scalar_one_or_none()
@@ -115,10 +129,13 @@ async def test_complete_e2e_pipeline_demonstration():
         drafts = dossier.outreach_drafts
         assert drafts is not None
         assert drafts["governance_status"] == "DRAFT_PENDING_APPROVAL"
+        assert len(drafts.get("executive_emails", [])) > 0
+        assert drafts.get("linkedin_sequence") is not None
+        
         audit = drafts["evidence_audit"]
         assert audit["passed"] is True
         assert len(audit.get("unsupported_claims_flagged", [])) == 0
-        print(f"[DEMO EXECUTION] 6. Copywriter Drafts Generated: Anti-Hallucination Audit Passed={audit['passed']}")
+        print(f"[DEMO EXECUTION] 6. Copywriter Drafts Generated: Anti-Hallucination Audit Passed={audit['passed']}, Emails={len(drafts['executive_emails'])}, LinkedIn=Present")
 
         # Step 5: Test Governance Gate - Verify Export is strictly BLOCKED prior to approval
         user_context = AuthenticatedUserContext(id="admin-001", email="admin@churnpoacher.io", role="ADMINISTRATOR")
@@ -133,7 +150,10 @@ async def test_complete_e2e_pipeline_demonstration():
         
         await db.refresh(dossier)
         assert dossier.status == "APPROVED"
-        print(f"[DEMO EXECUTION] 8. Human Review: Dossier approved by Sales Manager / Administrator.")
+
+        await db.refresh(workflow)
+        assert workflow.status == "APPROVED"
+        print(f"[DEMO EXECUTION] 8. Human Review: Dossier and Workflow approved by Sales Manager / Administrator.")
 
         # Step 7: Export Approved Outreach Package
         export_res = await export_outreach_package(dossier_id=dossier.id, db=db, current_user=user_context)
@@ -142,4 +162,62 @@ async def test_complete_e2e_pipeline_demonstration():
         assert "Competitive Deposition Pack" in export_res.markdown_bundle
         assert "Executive Emails" in export_res.markdown_bundle
         assert "LinkedIn Multi-Touch Sequence" in export_res.markdown_bundle
-        print(f"[DEMO EXECUTION] 9. Package Exported: Length={len(export_res.markdown_bundle)} chars, Bundle ready for sales activation.")
+
+        await db.refresh(workflow)
+        assert workflow.status == WorkflowState.COMPLETED.value
+        assert workflow.current_step == WorkflowStep.FINALIZED.value
+        print(f"[DEMO EXECUTION] 9. Package Exported: Workflow={workflow.id} reached COMPLETED (FINALIZED). Length={len(export_res.markdown_bundle)} chars.")
+
+
+@pytest.mark.asyncio
+async def test_full_pipeline_autonomous_dispatch():
+    """Tests autonomous dispatch of FULL_PIPELINE (no signal_id passed, as triggered from UI button)."""
+    async with AsyncSessionLocal() as db:
+        # Trigger full pipeline with no signal_id or company_id
+        run_req = WorkflowRunRequest(
+            target_challenger="SigNoz Cloud",
+            include_synthetic=True,
+            timeout_seconds=60,
+        )
+        workflow = await CentralOrchestrator.run_pipeline(request=run_req, db=db)
+
+        # Assertions
+        assert workflow.status == WorkflowState.DRAFT_PENDING_APPROVAL.value
+        assert workflow.current_step == WorkflowStep.APPROVAL_GATE.value
+        assert workflow.signal_id is not None
+        assert workflow.company_id is not None
+        assert workflow.dossier_id is not None
+
+        # Verify all 7 milestone steps were formally recorded
+        step_names = [s["step_name"] for s in workflow.step_history]
+        assert len(workflow.step_history) == 7
+        assert step_names == [
+            "LISTENER",
+            "PROFILER",
+            "QUALIFICATION",
+            "FINOPS",
+            "ARCHITECT",
+            "COPYWRITER",
+            "APPROVAL_GATE",
+        ]
+
+        # Verify drafts
+        dossier_res = await db.execute(select(DepositionDossier).where(DepositionDossier.id == workflow.dossier_id))
+        dossier = dossier_res.scalar_one_or_none()
+        assert dossier is not None
+        assert len(dossier.outreach_drafts.get("executive_emails", [])) > 0
+        assert dossier.outreach_drafts.get("linkedin_sequence") is not None
+
+        # Human Approval
+        user_context = AuthenticatedUserContext(id="admin-001", email="admin@churnpoacher.io", role="ADMINISTRATOR")
+        await approve_outreach_draft(dossier_id=dossier.id, db=db, current_user=user_context)
+        await db.refresh(workflow)
+        assert workflow.status == WorkflowState.APPROVED.value
+
+        # Export
+        export_res = await export_outreach_package(dossier_id=dossier.id, db=db, current_user=user_context)
+        assert export_res.status == "EXPORTED"
+        await db.refresh(workflow)
+        assert workflow.status == WorkflowState.COMPLETED.value
+        assert workflow.current_step == WorkflowStep.FINALIZED.value
+

@@ -8,14 +8,17 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from app.db.session import get_db
 from app.models.company import Company
 from app.models.signal import Signal
 from app.models.dossier import DepositionDossier
+from app.models.workflow import WorkflowExecution
 from app.models.execution_log import AgentExecutionLog
 from app.agents.copywriter.agent import CopywriterAgent
+from app.agents.orchestrator.pipeline import PipelineRunner
+from app.agents.orchestrator.state_machine import WorkflowState, WorkflowStep
 from app.api.deps import require_roles, AuthenticatedUserContext
 from app.agents.copywriter.schemas import OutreachPackage
 
@@ -168,6 +171,27 @@ async def approve_outreach_draft(
     if dossier.outreach_drafts and isinstance(dossier.outreach_drafts, dict):
         dossier.outreach_drafts["governance_status"] = "APPROVED"
 
+    # Synchronize associated WorkflowExecution if present
+    wf_res = await db.execute(
+        select(WorkflowExecution).where(
+            or_(
+                WorkflowExecution.dossier_id == dossier.id,
+                WorkflowExecution.company_id == dossier.company_id,
+            )
+        )
+    )
+    wf = wf_res.scalars().first()
+    if wf and wf.status == WorkflowState.DRAFT_PENDING_APPROVAL.value:
+        wf.status = WorkflowState.APPROVED.value
+        wf.current_step = WorkflowStep.APPROVAL_GATE.value
+        PipelineRunner._record_step(
+            workflow=wf,
+            step_name=WorkflowStep.APPROVAL_GATE.value,
+            status="APPROVED",
+            duration_ms=0,
+            details={"approved_by": getattr(current_user, "email", "ADMIN"), "action": "HUMAN_SIGN_OFF"},
+        )
+
     log_entry = AgentExecutionLog(
         agent_name="COPYWRITER",
         signal_id=dossier.signal_id,
@@ -208,6 +232,29 @@ async def reject_outreach_draft(
     if dossier.outreach_drafts and isinstance(dossier.outreach_drafts, dict):
         dossier.outreach_drafts["governance_status"] = "REJECTED"
         dossier.outreach_drafts["rejection_reason"] = reason
+
+    # Synchronize associated WorkflowExecution if present
+    wf_res = await db.execute(
+        select(WorkflowExecution).where(
+            or_(
+                WorkflowExecution.dossier_id == dossier.id,
+                WorkflowExecution.company_id == dossier.company_id,
+            )
+        )
+    )
+    wf = wf_res.scalars().first()
+    if wf:
+        wf.status = WorkflowState.REJECTED.value
+        wf.current_step = WorkflowStep.APPROVAL_GATE.value
+        wf.error_details = f"Outreach draft rejected by human reviewer: {reason}"
+        PipelineRunner._record_step(
+            workflow=wf,
+            step_name=WorkflowStep.APPROVAL_GATE.value,
+            status="REJECTED",
+            duration_ms=0,
+            details={"rejected_by": "HUMAN_REVIEWER", "reason": reason},
+            error_message=reason,
+        )
 
     log_entry = AgentExecutionLog(
         agent_name="COPYWRITER",
@@ -300,6 +347,27 @@ async def export_outreach_package(
         md_sections.append(f"**Recommended Response**: {obj.get('recommended_response')}\n")
 
     bundle_text = "\n\n".join(md_sections)
+
+    # Synchronize associated WorkflowExecution to COMPLETED upon authorized export
+    wf_res = await db.execute(
+        select(WorkflowExecution).where(
+            or_(
+                WorkflowExecution.dossier_id == dossier.id,
+                WorkflowExecution.company_id == dossier.company_id,
+            )
+        )
+    )
+    wf = wf_res.scalars().first()
+    if wf:
+        wf.status = WorkflowState.COMPLETED.value
+        wf.current_step = WorkflowStep.FINALIZED.value
+        PipelineRunner._record_step(
+            workflow=wf,
+            step_name=WorkflowStep.FINALIZED.value,
+            status="COMPLETED",
+            duration_ms=0,
+            details={"action": "EXPORT_OUTREACH_PACKAGE", "bundle_size_chars": len(bundle_text)},
+        )
 
     log_entry = AgentExecutionLog(
         agent_name="COPYWRITER",
