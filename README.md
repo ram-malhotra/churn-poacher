@@ -372,6 +372,8 @@ curl -X POST http://localhost:8000/api/v1/auth/seed-defaults
 # Backend OpenAPI Docs: http://localhost:8000/docs
 # Deep Health Probe: http://localhost:8000/api/v1/health/deep
 ```
+<img width="3994" height="1354" alt="image" src="https://github.com/user-attachments/assets/dc53d9ef-ea96-4d59-98b3-72679165c322" />
+
 
 ---
 
