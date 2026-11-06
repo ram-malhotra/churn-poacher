@@ -4,7 +4,7 @@ Safely integrates with the Reddit OAuth API if credentials are provided,
 or disables itself gracefully when credentials are absent.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import httpx
 from app.core.config import settings
 from app.core.logging import logger
@@ -58,20 +58,35 @@ class RedditAdapter:
             logger.error(f"Error during Reddit authentication: {e}")
             return False
 
-    async def fetch_signals(self, subreddits: List[str] = None) -> List[NormalizedSignal]:
+    async def fetch_signals(self, subreddits: Optional[List[str]] = None) -> List[NormalizedSignal]:
         """Fetches recent Datadog-related posts from specified subreddits."""
+        meta = await self.fetch_signals_with_meta(subreddits)
+        return meta["signals"]
+
+    async def fetch_signals_with_meta(self, subreddits: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Fetches signals with metadata for telemetry reporting."""
         if not self.is_configured():
             logger.info("Reddit adapter is disabled (no credentials provided in environment).")
-            return []
+            return {
+                "signals": [],
+                "records_retrieved": 0,
+                "errors": ["Reddit API credentials not configured (REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET missing)"],
+            }
 
         signals: List[NormalizedSignal] = []
+        errors: List[str] = []
+        total_records_retrieved = 0
         subreddits = subreddits or listener_config.SUBREDDITS[:2]
 
         async with httpx.AsyncClient(timeout=listener_config.REQUEST_TIMEOUT_SECONDS) as client:
             if not self._access_token:
                 authenticated = await self._authenticate(client)
                 if not authenticated:
-                    return []
+                    return {
+                        "signals": [],
+                        "records_retrieved": 0,
+                        "errors": ["Failed to authenticate with Reddit OAuth API"],
+                    }
 
             headers = {
                 "Authorization": f"bearer {self._access_token}",
@@ -89,11 +104,14 @@ class RedditAdapter:
                     }
                     response = await client.get(search_url, params=params, headers=headers)
                     if response.status_code != 200:
-                        logger.warning(f"Reddit search on r/{sub} returned HTTP {response.status_code}")
+                        msg = f"Reddit search on r/{sub} returned HTTP {response.status_code}"
+                        logger.warning(msg)
+                        errors.append(msg)
                         continue
 
                     data = response.json()
                     children = data.get("data", {}).get("children", [])
+                    total_records_retrieved += len(children)
                     for child in children:
                         post_data = child.get("data", {})
                         normalized = SignalNormalizer.normalize_reddit_post(post_data)
@@ -101,7 +119,13 @@ class RedditAdapter:
                         signals.append(classified)
 
                 except Exception as e:
-                    logger.error(f"Error fetching from r/{sub}: {e}")
+                    msg = f"Error querying Reddit r/{sub}: {e}"
+                    logger.error(msg)
+                    errors.append(msg)
                     continue
 
-        return signals
+        return {
+            "signals": signals,
+            "records_retrieved": total_records_retrieved,
+            "errors": errors,
+        }

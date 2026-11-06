@@ -4,7 +4,7 @@ Fetches public incidents and component degradations from status.datadoghq.com.
 Supports both the official Statuspage API JSON and the incident history RSS feed.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
@@ -33,16 +33,28 @@ class DatadogStatusAdapter:
 
     async def fetch_signals(self) -> List[NormalizedSignal]:
         """Fetches active and recent incidents from Datadog's official status feed."""
-        signals = await self._fetch_json()
+        meta = await self.fetch_signals_with_meta()
+        return meta["signals"]
+
+    async def fetch_signals_with_meta(self) -> Dict[str, Any]:
+        """Fetches incidents with metadata for telemetry reporting."""
+        signals, count, errors = await self._fetch_json()
         if signals:
-            return signals
-        
+            return {"signals": signals, "records_retrieved": count, "errors": errors}
+
         # Fallback to official incident history RSS feed
         logger.info("Falling back to Datadog Status history RSS feed...")
-        return await self._fetch_rss()
+        rss_signals, rss_count, rss_errors = await self._fetch_rss()
+        return {
+            "signals": rss_signals,
+            "records_retrieved": rss_count,
+            "errors": errors + rss_errors,
+        }
 
-    async def _fetch_json(self) -> List[NormalizedSignal]:
+    async def _fetch_json(self) -> Tuple[List[NormalizedSignal], int, List[str]]:
         signals: List[NormalizedSignal] = []
+        errors: List[str] = []
+        records_count = 0
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ChurnPoacher/1.0",
             "Accept": "application/json",
@@ -53,25 +65,35 @@ class DatadogStatusAdapter:
                 if response.status_code == 200:
                     data = response.json()
                     incidents = data.get("incidents", [])
+                    records_count = len(incidents)
                     for incident in incidents:
                         normalized = SignalNormalizer.normalize_datadog_incident(incident)
                         classified = SignalClassifier.classify(normalized)
                         signals.append(classified)
+                else:
+                    errors.append(f"Statuspage API returned HTTP {response.status_code}")
         except Exception as e:
-            logger.debug(f"Datadog JSON API check failed: {e}")
-        return signals
+            msg = f"Datadog JSON API check failed: {e}"
+            logger.debug(msg)
+            errors.append(msg)
+        return signals, records_count, errors
 
-    async def _fetch_rss(self) -> List[NormalizedSignal]:
+    async def _fetch_rss(self) -> Tuple[List[NormalizedSignal], int, List[str]]:
         signals: List[NormalizedSignal] = []
+        errors: List[str] = []
+        records_count = 0
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(self.rss_url)
                 if response.status_code != 200:
-                    logger.warning(f"Datadog RSS feed returned HTTP {response.status_code}")
-                    return []
+                    msg = f"Datadog RSS feed returned HTTP {response.status_code}"
+                    logger.warning(msg)
+                    errors.append(msg)
+                    return [], 0, errors
 
                 root = ET.fromstring(response.text)
                 items = root.findall(".//item")
+                records_count = len(items)
                 for item in items:
                     title_elem = item.find("title")
                     link_elem = item.find("link")
@@ -101,24 +123,26 @@ class DatadogStatusAdapter:
                         source_url=link,
                         vendor="Datadog",
                         title=title,
-                        content=description,
-                        author="Datadog StatusPage",
+                        content=f"{title}: {description}",
+                        author="Datadog SRE",
                         published_at=published_at,
-                        detected_at=datetime.now(timezone.utc),
                         signal_type="VENDOR_INCIDENT",
-                        complaint_category="VENDOR_INCIDENT",
-                        sentiment="NEUTRAL",
-                        urgency_score=0.88,
+                        complaint_category="OUTAGE",
+                        sentiment="NEGATIVE",
+                        urgency_score=0.9,
                         confidence_score=1.0,
-                        relevance_score=0.90,
+                        relevance_score=0.95,
                         extracted_evidence={
                             "incident_title": title,
-                            "feed": "Datadog US1 Status RSS",
+                            "url": link,
+                            "guid": guid,
                         },
                         is_synthetic=False,
                     )
-                    classified = SignalClassifier.classify(normalized)
-                    signals.append(classified)
+                    signals.append(SignalClassifier.classify(normalized))
         except Exception as e:
-            logger.error(f"Error parsing Datadog RSS feed: {e}")
-        return signals
+            msg = f"Datadog RSS fetch error: {e}"
+            logger.error(msg)
+            errors.append(msg)
+
+        return signals, records_count, errors

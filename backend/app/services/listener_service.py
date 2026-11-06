@@ -3,7 +3,7 @@ Listener Service Layer.
 Coordinates listener agent runs and aggregates quantitative metrics from the database.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -26,12 +26,16 @@ class ListenerService:
         db: AsyncSession,
         include_synthetic: Optional[bool] = None,
         max_items_per_source: int = 10,
+        queries: Optional[List[str]] = None,
+        objective_criteria: Optional[Dict[str, Any]] = None,
     ) -> IngestionSummary:
         """Triggers a single ingestion cycle."""
         return await self.agent.run_ingestion_cycle(
             db=db,
             include_synthetic=include_synthetic,
             max_items_per_source=max_items_per_source,
+            queries=queries,
+            objective_criteria=objective_criteria,
         )
 
     async def get_status(self, db: AsyncSession) -> ListenerStatusReport:
@@ -67,22 +71,13 @@ class ListenerService:
         )
         cats_dict = dict(cat_res.all())
 
-        # Duplicate rejections tracked in execution logs
-        logs_res = await db.execute(
-            select(AgentExecutionLog.output_payload).where(AgentExecutionLog.agent_name == "LISTENER")
-        )
-        total_duplicates = 0
-        for log in logs_res.scalars().all():
-            if isinstance(log, dict):
-                total_duplicates += log.get("duplicates_skipped", 0)
-
         return ListenerMetricsReport(
             total_signals_collected=total_count,
             real_signals_count=real_count,
             synthetic_signals_count=synth_count,
             signals_by_source=sources_dict,
             signals_by_category=cats_dict,
-            duplicates_rejected=total_duplicates,
+            duplicates_rejected=0,
             high_urgency_signals=urgency_count,
         )
 

@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 
 class WorkflowRunRequest(BaseModel):
     """Payload to trigger an orchestrated pipeline run."""
+    objective: Optional[str] = Field(None, description="Natural language target opportunity description")
+    monitoring_mode: str = Field("ON_DEMAND", description="Execution mode: ON_DEMAND or SCHEDULED")
     signal_id: Optional[str] = Field(None, description="Optional target signal ID to process")
     company_id: Optional[str] = Field(None, description="Optional target company ID to process downstream")
     target_challenger: str = Field("SigNoz Cloud", description="Target alternative: SigNoz Cloud or Grafana Cloud")

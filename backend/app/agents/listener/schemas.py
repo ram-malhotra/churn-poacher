@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 class NormalizedSignal(BaseModel):
     """Common normalized signal format across all external and synthetic sources."""
-    source: str = Field(..., description="Source name: DATADOG_STATUS, HACKER_NEWS, REDDIT, TWITTER, SYNTHETIC")
+    source: str = Field(..., description="Source name: DATADOG_STATUS, HACKER_NEWS, REDDIT, G2_REVIEWS, TWITTER, SYNTHETIC")
     source_id: str = Field(..., description="Unique external ID or fingerprint")
     source_url: str = Field(..., description="Canonical source URL")
     vendor: str = Field(default="Datadog", description="Monitored competitor vendor")
@@ -31,6 +31,18 @@ class NormalizedSignal(BaseModel):
     is_synthetic: bool = Field(default=False, description="Flag indicating synthetic demo data vs real data")
 
 
+class SourceExecutionSummary(BaseModel):
+    """Operational summary of a specific signal ingestion source."""
+    source_name: str
+    connection_status: str  # "CONNECTED", "UNCONFIGURED", "UNAVAILABLE", "ERROR"
+    monitoring_status: str  # "IDLE", "SCANNING", "COMPLETED", "SKIPPED"
+    last_successful_scan: Optional[datetime] = None
+    records_retrieved: int = 0
+    relevant_signals: int = 0
+    errors: List[str] = Field(default_factory=list)
+    notes: Optional[str] = None
+
+
 class IngestionSummary(BaseModel):
     """Structured report returned at the end of an ingestion cycle."""
     total_fetched: int = 0
@@ -41,6 +53,7 @@ class IngestionSummary(BaseModel):
     high_urgency_count: int = 0
     errors: List[str] = Field(default_factory=list)
     execution_time_ms: int = 0
+    sources: List[SourceExecutionSummary] = Field(default_factory=list)
 
 
 class AdapterStatus(BaseModel):
@@ -56,8 +69,10 @@ class AdapterStatus(BaseModel):
 class ListenerStatusReport(BaseModel):
     """Full operational health and adapter readiness report."""
     is_running: bool = False
+    monitoring_mode: str = "ON_DEMAND"  # "ON_DEMAND" or "SCHEDULED"
     demo_mode: bool = True
     adapters: List[AdapterStatus] = Field(default_factory=list)
+    sources: List[SourceExecutionSummary] = Field(default_factory=list)
     last_run_at: Optional[datetime] = None
     total_signals_stored: int = 0
 

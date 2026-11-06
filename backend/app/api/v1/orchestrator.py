@@ -5,6 +5,7 @@ Provides pipeline execution, workflow status inspection, listing, metrics, and r
 
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -17,8 +18,13 @@ from app.agents.orchestrator.schemas import (
     WorkflowMetricsResponse,
     WorkflowRetryRequest,
 )
+from app.services.objective.objective_interpreter import ObjectiveInterpreter, ObjectiveCriteria
 
 router = APIRouter(tags=["Central Orchestrator"])
+
+
+class InterpretObjectiveRequest(BaseModel):
+    objective: str
 
 
 def _to_response(w: WorkflowExecution) -> WorkflowResponse:
@@ -46,6 +52,15 @@ def _to_response(w: WorkflowExecution) -> WorkflowResponse:
 
 
 # 1. Static Routes (Must be declared before parameterized routes)
+@router.post("/orchestrator/interpret-objective", response_model=ObjectiveCriteria)
+async def interpret_objective(payload: InterpretObjectiveRequest):
+    """
+    Translates an unstructured natural-language target opportunity into structured search criteria
+    and tailored public source search queries.
+    """
+    return ObjectiveInterpreter.interpret(payload.objective)
+
+
 @router.get("/orchestrator/workflows", response_model=WorkflowListResponse)
 async def list_workflows(
     status: Optional[str] = Query(None, description="Filter by workflow state (e.g. DRAFT_PENDING_APPROVAL, FAILED)"),
@@ -100,7 +115,10 @@ async def get_workflow_status(
     """Retrieves execution details, step history, and status for a specific workflow."""
     workflow = await CentralOrchestrator.get_workflow(workflow_id=workflow_id, db=db)
     if not workflow:
-        raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow with ID '{workflow_id}' not found",
+        )
     return _to_response(workflow)
 
 
@@ -108,25 +126,16 @@ async def get_workflow_status(
 @router.post("/orchestrator/retry/{workflow_id}", response_model=WorkflowResponse)
 async def retry_failed_workflow(
     workflow_id: str,
-    body: Optional[WorkflowRetryRequest] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Retries a failed or rejected workflow from its point of failure.
-    Reuses completed upstream steps to avoid unnecessary re-computation.
-    """
-    max_override = body.max_retries_override if body else None
+    """Retries a FAILED workflow execution from its last failed step."""
     try:
-        workflow = await CentralOrchestrator.retry_workflow(
-            workflow_id=workflow_id,
-            db=db,
-            max_retries_override=max_override,
-        )
+        workflow = await CentralOrchestrator.retry_workflow(workflow_id=workflow_id, db=db)
         return _to_response(workflow)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Workflow retry failed: {str(e)}",
+            detail=f"Failed to retry workflow: {str(e)}",
         )

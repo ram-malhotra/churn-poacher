@@ -551,3 +551,35 @@ export interface BudgetHistoryItem {
   approved_by?: string | null;
   created_at: string;
 }
+
+
+// Natural Language Objective & Source Monitoring Schemas
+export interface TargetCompanySize {
+  min?: number | null;
+  max?: number | null;
+}
+
+export interface ObjectiveCriteria {
+  raw_objective: string;
+  target_geography: string[];
+  target_company_size?: TargetCompanySize | null;
+  target_industry?: string | null;
+  target_vendor: string;
+  pain_points: string[];
+  migration_intent: boolean;
+  alternative_technologies: string[];
+  priority_signals: string[];
+  search_queries: string[];
+  filter_summary: string;
+}
+
+export interface SourceExecutionSummary {
+  source_name: string;
+  connection_status: "CONNECTED" | "UNCONFIGURED" | "UNAVAILABLE" | "ERROR" | string;
+  monitoring_status: "IDLE" | "SCANNING" | "COMPLETED" | "SKIPPED" | "FAILED" | string;
+  last_successful_scan?: string | null;
+  records_retrieved: number;
+  relevant_signals: number;
+  errors: string[];
+  notes?: string | null;
+}

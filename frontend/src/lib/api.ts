@@ -15,6 +15,8 @@ import {
   CrustdataBudgetStatus,
   BudgetIncreaseRequest,
   BudgetHistoryItem,
+  ObjectiveCriteria,
+  SourceExecutionSummary,
 } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -166,6 +168,8 @@ export const api = {
 
   // Orchestrator
   async runWorkflow(payload: {
+    objective?: string;
+    monitoring_mode?: "ON_DEMAND" | "SCHEDULED";
     signal_id?: string;
     company_id?: string;
     target_challenger?: string;
@@ -219,6 +223,17 @@ export const api = {
         potential_annual_savings_usd: 0,
       };
     }
+  },
+
+  async interpretObjective(objective: string): Promise<ObjectiveCriteria> {
+    return request<ObjectiveCriteria>("/orchestrator/interpret-objective", {
+      method: "POST",
+      body: JSON.stringify({ objective }),
+    });
+  },
+
+  async getListenerSources(): Promise<SourceExecutionSummary[]> {
+    return request<SourceExecutionSummary[]>("/listener/sources");
   },
 
   async runListener(params: { include_synthetic?: boolean; max_items_per_source?: number } = {}): Promise<any> {

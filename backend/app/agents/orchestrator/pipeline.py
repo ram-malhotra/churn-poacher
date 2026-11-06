@@ -1,7 +1,8 @@
 """
 Pipeline Runner for Central Orchestrator.
 Executes the sequential multi-agent pipeline with qualification gates, partial resumption,
-error handling, and human approval preservation.
+error handling, and human approval preservation across the seven stages:
+LISTENER -> PROFILER -> QUALIFICATION -> FINOPS -> ARCHITECT -> COPYWRITER -> APPROVAL_GATE
 """
 
 import time
@@ -19,7 +20,6 @@ from app.models.workflow import WorkflowExecution
 from app.models.execution_log import AgentExecutionLog
 from app.agents.orchestrator.state_machine import WorkflowState, WorkflowStep, StateMachineValidator
 from app.agents.listener.agent import ListenerAgent
-from app.agents.profiler.agent import ProfilerAgent
 from app.agents.profiler.entity_resolver import EntityResolver
 from app.agents.profiler.domain_verifier import DomainVerifier
 from app.agents.profiler.technology_profiler import TechnologyProfiler
@@ -27,6 +27,7 @@ from app.agents.profiler.icp_scorer import IcpScorer
 from app.agents.finops_architect.finops_agent import FinOpsAgent
 from app.agents.finops_architect.architecture_agent import ArchitectureAgent
 from app.agents.copywriter.agent import CopywriterAgent
+from app.services.objective.objective_interpreter import ObjectiveInterpreter
 
 
 class PipelineRunner:
@@ -81,6 +82,7 @@ class PipelineRunner:
                 "workflow_id": workflow.id,
                 "workflow_type": workflow.workflow_type,
                 "target_challenger": workflow.target_challenger,
+                "objective": workflow.input_payload.get("objective"),
             },
             output_payload={
                 "final_status": workflow.status,
@@ -116,9 +118,39 @@ class PipelineRunner:
                 workflow.current_step = WorkflowStep.LISTENER.value
                 await db.commit()
 
+                # Process natural language objective if present
+                objective = workflow.input_payload.get("objective")
+                parsed_criteria: Optional[Dict[str, Any]] = workflow.input_payload.get("parsed_criteria")
+                search_queries: Optional[List[str]] = None
+                if objective and not parsed_criteria:
+                    criteria = ObjectiveInterpreter.interpret(objective)
+                    parsed_criteria = criteria.model_dump()
+                    search_queries = criteria.search_queries
+                    workflow.input_payload["parsed_criteria"] = parsed_criteria
+                    out_p = dict(workflow.output_payload or {})
+                    out_p["objective"] = objective
+                    out_p["parsed_criteria"] = parsed_criteria
+                    workflow.output_payload = out_p
+                    await db.commit()
+                elif parsed_criteria:
+                    search_queries = parsed_criteria.get("search_queries")
+
                 listener = ListenerAgent()
-                include_synth = workflow.input_payload.get("include_synthetic", True)
-                summary = await listener.run_ingestion_cycle(db, include_synthetic=include_synth, max_items_per_source=5)
+                include_synth = workflow.input_payload.get("include_synthetic", False)
+                summary = await listener.run_ingestion_cycle(
+                    db,
+                    include_synthetic=include_synth,
+                    max_items_per_source=5,
+                    queries=search_queries,
+                    objective_criteria=parsed_criteria,
+                )
+
+                # Persist source execution telemetry
+                out_p = dict(workflow.output_payload or {})
+                out_p["source_execution_results"] = [s.model_dump(mode="json") for s in summary.sources]
+                out_p["listener_summary"] = summary.model_dump(mode="json")
+                workflow.output_payload = out_p
+                await db.commit()
 
                 # Pick an actionable newly ingested signal
                 target_sig_id = workflow.input_payload.get("signal_id")
@@ -127,7 +159,7 @@ class PipelineRunner:
                     signal = sig_res.scalar_one_or_none()
 
                 if not signal:
-                    # Prioritize signals with identifiable corporate entities over anonymous complaints
+                    # Look for signals: prioritize those matching objective and identifiable corporate entities
                     all_new_sig_query = select(Signal).where(Signal.status == "NEW").order_by(desc(Signal.urgency_score))
                     all_new_sig_res = await db.execute(all_new_sig_query)
                     all_new_signals = all_new_sig_res.scalars().all()
@@ -158,7 +190,12 @@ class PipelineRunner:
                     step_name=WorkflowStep.LISTENER.value,
                     status="SUCCESS",
                     duration_ms=int((time.time() - step_start) * 1000),
-                    details={"signals_fetched": summary.total_fetched, "new_signals_saved": summary.new_signals_saved, "selected_signal_id": signal.id if signal else None},
+                    details={
+                        "signals_fetched": summary.total_fetched,
+                        "new_signals_saved": summary.new_signals_saved,
+                        "selected_signal_id": signal.id if signal else None,
+                        "sources_scanned": [s.source_name for s in summary.sources if s.monitoring_status == "COMPLETED"],
+                    },
                 )
                 await db.commit()
             elif signal:
@@ -209,7 +246,7 @@ class PipelineRunner:
                     step_name=WorkflowStep.PROFILER.value,
                     status="UNRESOLVED",
                     duration_ms=int((time.time() - step_start) * 1000),
-                    details={"reason": "Signal source is anonymous or hobbyist; cannot resolve business entity."},
+                    details={"reason": "Signal source is anonymous or hobbyist; cannot resolve business entity without hallucination."},
                 )
                 workflow.status = WorkflowState.REJECTED.value
                 workflow.current_step = WorkflowStep.PROFILER.value
@@ -464,15 +501,29 @@ class PipelineRunner:
         workflow.current_step = WorkflowStep.APPROVAL_GATE.value
         workflow.completed_at = datetime.now(timezone.utc)
         
-        # Populate output payload summary
-        workflow.output_payload = {
+        # Populate comprehensive output payload summary preserving all stages
+        out_p = dict(workflow.output_payload or {})
+        out_p.update({
             "company_id": company.id,
             "company_name": company.name,
+            "domain": company.domain,
             "signal_id": signal.id if signal else None,
             "dossier_id": workflow.dossier_id,
+            "qualification_status": company.qualification_status,
+            "icp_score": company.icp_score,
+            "financial_estimates": dossier.financial_delta,
+            "migration_blueprint_summary": {
+                "phases_count": len(dossier.migration_blueprint.get("phases", [])),
+                "collector_yaml_ready": bool(dossier.migration_blueprint.get("collector_yaml")),
+            },
+            "outreach_drafts": {
+                "emails_count": len(drafts_payload.get("executive_emails", [])),
+                "linkedin_steps_count": len(drafts_payload.get("linkedin_sequence", {}).get("steps", [])),
+            },
             "governance_status": "DRAFT_PENDING_APPROVAL",
             "message": "Pipeline completed successfully. Outreach collateral is awaiting human review.",
-        }
+        })
+        workflow.output_payload = out_p
 
         # Formally record Step 7 in step_history
         cls._record_step(

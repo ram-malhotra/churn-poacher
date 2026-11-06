@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     HACKER_NEWS_API_BASE: str = "https://hn.algolia.com/api/v1"
     DATADOG_STATUS_PAGE_URL: str = "https://status.datadoghq.com/api/v2/summary.json"
     TWITTER_BEARER_TOKEN: Optional[str] = None
+    G2_API_KEY: Optional[str] = None
 
     # Enrichment integrations
     CLEARBIT_API_KEY: Optional[str] = None
