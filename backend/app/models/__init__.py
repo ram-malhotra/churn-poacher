@@ -12,6 +12,8 @@ from app.models.intelligence import (
     IntelligenceEntity,
     IntelligenceSearch,
     IntelligenceEvidence,
+    CrustdataBudgetLedger,
+    CrustdataBudgetHistory,
 )
 
 __all__ = [
@@ -24,4 +26,6 @@ __all__ = [
     "IntelligenceEntity",
     "IntelligenceSearch",
     "IntelligenceEvidence",
+    "CrustdataBudgetLedger",
+    "CrustdataBudgetHistory",
 ]

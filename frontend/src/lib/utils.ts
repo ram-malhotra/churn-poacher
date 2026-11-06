@@ -49,3 +49,41 @@ export function cleanSignalText(content: string | undefined | null): string {
   // Normalize extra whitespace
   return text.replace(/\s+/g, " ").trim();
 }
+
+import type { DecisionMaker } from "@/types";
+
+export function formatDecisionMaker(dm: DecisionMaker | null | undefined): string | null {
+  if (dm === null || dm === undefined) return null;
+
+  if (typeof dm === "string") {
+    const trimmed = dm.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (typeof dm === "object") {
+    const role = typeof dm.role === "string" ? dm.role.trim() : typeof dm.title === "string" ? dm.title.trim() : "";
+    const dept = typeof dm.department === "string" ? dm.department.trim() : "";
+    const name = typeof dm.name === "string" ? dm.name.trim() : "";
+
+    if (name) {
+      if (role && dept) return `${name} (${role} · ${dept})`;
+      if (role) return `${name} (${role})`;
+      if (dept) return `${name} (${dept})`;
+      return name;
+    }
+
+    if (role && dept) return `${role} · ${dept}`;
+    if (role) return role;
+    if (dept) return dept;
+
+    for (const val of Object.values(dm)) {
+      if (typeof val === "string" && val.trim().length > 0 && val.trim() !== "[object Object]") {
+        return val.trim();
+      }
+    }
+    return null;
+  }
+
+  const str = String(dm).trim();
+  return str.length > 0 && str !== "[object Object]" ? str : null;
+}

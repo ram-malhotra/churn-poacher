@@ -52,6 +52,13 @@ class EntityCandidate(BaseModel):
     confidence_score: float = 0.0
     is_ambiguous: bool = False
     is_mock: bool = False
+    data_origin: str = "LIVE"  # "LIVE", "CACHED", "DEMO"
+    source: str = "Crustdata API v2025-11-01"
+    retrieved_at: datetime = Field(default_factory=datetime.utcnow)
+    verification_status: str = "VERIFIED"  # "VERIFIED", "UNVERIFIED", "UNKNOWN"
+    buying_intent_status: str = "INTELLIGENCE_ONLY"  # "INTELLIGENCE_ONLY", "LINKED_TO_DISTRESS_SIGNAL"
+    buying_intent_note: Optional[str] = None
+    provenance: Dict[str, str] = Field(default_factory=dict)
 
 
 class EntitySearchRequest(BaseModel):
@@ -59,6 +66,7 @@ class EntitySearchRequest(BaseModel):
     query: str
     entity_type: Optional[EntityType] = None  # If None, auto-detected
     limit: int = Field(default=5, ge=1, le=20)
+    mode: str = "LIVE"  # "LIVE" or "DEMO"
 
 
 class EntitySearchResponse(BaseModel):
@@ -69,6 +77,9 @@ class EntitySearchResponse(BaseModel):
     is_ambiguous: bool
     credits_consumed: float
     is_mock: bool = False
+    data_origin: str = "LIVE"
+    interpretation: Optional[Dict[str, Any]] = None
+    buying_intent_distinction: Optional[str] = None
 
 
 class IntelligenceEvidenceItem(BaseModel):
@@ -150,6 +161,11 @@ class CompanyIntelligenceProfile(BaseModel):
     data_freshness: str = "CACHED"
     retrieved_at: datetime = Field(default_factory=datetime.utcnow)
     is_mock: bool = False
+    data_origin: str = "LIVE"  # "LIVE", "CACHED", "DEMO"
+    source: str = "Crustdata API v2025-11-01"
+    verification_status: str = "VERIFIED"
+    buying_intent_status: str = "INTELLIGENCE_ONLY"
+    provenance: Dict[str, str] = Field(default_factory=dict)
 
 
 class PersonIntelligenceProfile(BaseModel):
@@ -177,6 +193,11 @@ class PersonIntelligenceProfile(BaseModel):
     data_freshness: str = "CACHED"
     retrieved_at: datetime = Field(default_factory=datetime.utcnow)
     is_mock: bool = False
+    data_origin: str = "LIVE"  # "LIVE", "CACHED", "DEMO"
+    source: str = "Crustdata API v2025-11-01"
+    verification_status: str = "VERIFIED"
+    buying_intent_status: str = "INTELLIGENCE_ONLY"
+    provenance: Dict[str, str] = Field(default_factory=dict)
 
 
 class DeepEnrichmentCostEstimate(BaseModel):
@@ -189,3 +210,37 @@ class DeepEnrichmentCostEstimate(BaseModel):
     safety_threshold: float
     can_proceed: bool
     warning_message: Optional[str] = None
+
+
+class CrustdataBudgetStatus(BaseModel):
+    """Application-level spending budget status and metrics."""
+    total_budget: float = 1450.0
+    used_credits: float = 0.0
+    remaining_credits: float = 1450.0
+    usage_percentage: float = 0.0
+    status: str = "Active"  # "Active", "Near Limit", "Exhausted"
+    mock_used_credits: float = 0.0
+    account_credits: Optional[CrustdataCreditsInfo] = None
+    is_exhausted: bool = False
+
+
+class BudgetIncreaseRequest(BaseModel):
+    """User request to increase the application-level Crustdata budget."""
+    amount: float = Field(..., gt=0, description="Additional credits to allocate to application budget")
+    reason: Optional[str] = Field(default="User-approved budget increase", description="Rationale for budget increase")
+    approved_by: Optional[str] = Field(default="User", description="User or role granting approval")
+
+
+class BudgetHistoryItem(BaseModel):
+    """Audit record for budget allocations and increases."""
+    id: str
+    action: str
+    amount: float
+    budget_before: float
+    budget_after: float
+    used_before: float
+    used_after: float
+    notes: str
+    is_mock: bool
+    approved_by: Optional[str] = None
+    created_at: datetime

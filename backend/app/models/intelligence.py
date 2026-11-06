@@ -101,3 +101,37 @@ class IntelligenceEvidence(Base):
 
     # Relationships
     entity: Mapped["IntelligenceEntity"] = relationship("IntelligenceEntity", back_populates="evidence")
+
+
+class CrustdataBudgetLedger(Base, TimestampMixin):
+    """
+    Maintains the application-level Crustdata spending budget and tracked cumulative usage.
+    Singleton record with id='global'.
+    """
+    __tablename__ = "crustdata_budget_ledgers"
+
+    id: Mapped[str] = mapped_column(String(50), primary_key=True, default="global")
+    total_budget: Mapped[float] = mapped_column(Float, default=1200.0)
+    used_credits: Mapped[float] = mapped_column(Float, default=0.0)
+    mock_used_credits: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class CrustdataBudgetHistory(Base):
+    """
+    Audit log of all budget increases and credit usage transactions.
+    """
+    __tablename__ = "crustdata_budget_history"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    action: Mapped[str] = mapped_column(String(50), index=True)  # INITIAL_BUDGET, USAGE, BUDGET_INCREASE
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    budget_before: Mapped[float] = mapped_column(Float, default=1200.0)
+    budget_after: Mapped[float] = mapped_column(Float, default=1200.0)
+    used_before: Mapped[float] = mapped_column(Float, default=0.0)
+    used_after: Mapped[float] = mapped_column(Float, default=0.0)
+    notes: Mapped[str] = mapped_column(String(500), default="")
+    is_mock: Mapped[bool] = mapped_column(Boolean, default=False)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )

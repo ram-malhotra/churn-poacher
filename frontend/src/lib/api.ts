@@ -12,6 +12,9 @@ import {
   EntitySearchResponse,
   CrustdataEntityType,
   CrustdataEnrichmentLevel,
+  CrustdataBudgetStatus,
+  BudgetIncreaseRequest,
+  BudgetHistoryItem,
 } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -26,14 +29,21 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const response = await fetch(url, { ...options, headers });
 
   if (!response.ok) {
-    let errorDetail = response.statusText;
+    let errorDetail: any = response.statusText;
     try {
       const errJson = await response.json();
       errorDetail = errJson.detail || errJson.message || JSON.stringify(errJson);
     } catch {
       // ignore
     }
-    throw new Error(errorDetail);
+    const message =
+      typeof errorDetail === "string"
+        ? errorDetail
+        : errorDetail?.message || JSON.stringify(errorDetail);
+    const err: any = new Error(message);
+    err.status = response.status;
+    err.detail = errorDetail;
+    throw err;
   }
 
   return response.json();
@@ -231,14 +241,37 @@ export const api = {
     return request<CrustdataCreditsInfo>("/crustdata/credits");
   },
 
+  async getCrustdataBudget(): Promise<CrustdataBudgetStatus> {
+    return request<CrustdataBudgetStatus>("/crustdata/budget");
+  },
+
+  async increaseCrustdataBudget(payload: BudgetIncreaseRequest): Promise<CrustdataBudgetStatus> {
+    return request<CrustdataBudgetStatus>("/crustdata/budget/increase", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async getCrustdataBudgetHistory(limit = 50): Promise<BudgetHistoryItem[]> {
+    return request<BudgetHistoryItem[]>(`/crustdata/budget/history?limit=${limit}`);
+  },
+
   async searchCrustdata(params: {
     query: string;
     entity_type?: CrustdataEntityType;
     limit?: number;
+    mode?: "LIVE" | "DEMO";
   }): Promise<EntitySearchResponse> {
     return request<EntitySearchResponse>("/crustdata/search", {
       method: "POST",
       body: JSON.stringify(params),
+    });
+  },
+
+  async interpretCrustdataQuery(query: string): Promise<any> {
+    return request("/crustdata/interpret-query", {
+      method: "POST",
+      body: JSON.stringify({ query }),
     });
   },
 
@@ -248,6 +281,7 @@ export const api = {
     level?: CrustdataEnrichmentLevel;
     force_refresh?: boolean;
     confirmation_confirmed?: boolean;
+    mode?: "LIVE" | "DEMO";
   }): Promise<any> {
     return request("/crustdata/enrich", {
       method: "POST",

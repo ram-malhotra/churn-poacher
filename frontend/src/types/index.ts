@@ -34,6 +34,18 @@ export interface EvidenceRecord {
   verified_at?: string;
 }
 
+export interface DecisionMakerObject {
+  role?: string | null;
+  department?: string | null;
+  name?: string | null;
+  title?: string | null;
+  email?: string | null;
+  linkedin_url?: string | null;
+  [key: string]: string | number | boolean | null | undefined;
+}
+
+export type DecisionMaker = string | DecisionMakerObject;
+
 export interface Company {
   id: string;
   signal_id: string;
@@ -48,7 +60,7 @@ export interface Company {
   identity_confidence: number;
   technology_confidence: number;
   qualification_status: QualificationStatus;
-  decision_makers: string[];
+  decision_makers: DecisionMaker[];
   evidence_sources: string[];
   evidence_records: EvidenceRecord[];
   is_synthetic: boolean;
@@ -310,6 +322,13 @@ export interface CrustdataCreditsInfo {
   renewal_date?: string | null;
   enabled_endpoints: string[];
   is_mock: boolean;
+  data_origin?: "LIVE" | "CACHED" | "DEMO";
+  source?: string;
+  retrieved_at?: string;
+  verification_status?: string;
+  buying_intent_status?: string;
+  buying_intent_note?: string | null;
+  provenance?: Record<string, string>;
   checked_at: string;
 }
 
@@ -327,6 +346,13 @@ export interface EntityCandidate {
   confidence_score: number;
   is_ambiguous: boolean;
   is_mock: boolean;
+  data_origin?: "LIVE" | "CACHED" | "DEMO";
+  source?: string;
+  retrieved_at?: string;
+  verification_status?: string;
+  buying_intent_status?: string;
+  buying_intent_note?: string | null;
+  provenance?: Record<string, string>;
 }
 
 export interface EntitySearchResponse {
@@ -336,6 +362,9 @@ export interface EntitySearchResponse {
   is_ambiguous: boolean;
   credits_consumed: number;
   is_mock: boolean;
+  data_origin?: "LIVE" | "CACHED" | "DEMO";
+  interpretation?: any;
+  buying_intent_distinction?: string | null;
 }
 
 export interface TechnographicItem {
@@ -415,6 +444,12 @@ export interface CompanyIntelligenceProfile {
   data_freshness: string;
   retrieved_at: string;
   is_mock: boolean;
+  data_origin?: "LIVE" | "CACHED" | "DEMO";
+  source?: string;
+  verification_status?: string;
+  buying_intent_status?: string;
+  buying_intent_note?: string | null;
+  provenance?: Record<string, string>;
 }
 
 export interface PersonIntelligenceProfile {
@@ -441,6 +476,12 @@ export interface PersonIntelligenceProfile {
   data_freshness: string;
   retrieved_at: string;
   is_mock: boolean;
+  data_origin?: "LIVE" | "CACHED" | "DEMO";
+  source?: string;
+  verification_status?: string;
+  buying_intent_status?: string;
+  buying_intent_note?: string | null;
+  provenance?: Record<string, string>;
 }
 
 export interface DeepEnrichmentCostEstimate {
@@ -454,3 +495,44 @@ export interface DeepEnrichmentCostEstimate {
   warning_message?: string | null;
 }
 
+
+
+export type CrustdataBudgetStatusType = "Active" | "Near Limit" | "Exhausted";
+
+export interface CrustdataBudgetStatus {
+  total_budget: number;
+  used_credits: number;
+  remaining_credits: number;
+  usage_percentage: number;
+  status: CrustdataBudgetStatusType;
+  mock_used_credits: number;
+  account_credits?: CrustdataCreditsInfo | null;
+  is_exhausted: boolean;
+}
+
+export interface BudgetIncreaseRequest {
+  amount: number;
+  reason?: string;
+  approved_by?: string;
+}
+
+export interface BudgetHistoryItem {
+  id: string;
+  action: string;
+  amount: number;
+  budget_before: number;
+  budget_after: number;
+  used_before: number;
+  used_after: number;
+  notes: string;
+  is_mock: boolean;
+  data_origin?: "LIVE" | "CACHED" | "DEMO";
+  source?: string;
+  retrieved_at?: string;
+  verification_status?: string;
+  buying_intent_status?: string;
+  buying_intent_note?: string | null;
+  provenance?: Record<string, string>;
+  approved_by?: string | null;
+  created_at: string;
+}

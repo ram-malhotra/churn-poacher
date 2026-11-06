@@ -1,7 +1,8 @@
 """
 Deterministic Mock Provider for Crustdata Intelligence.
-Used when CRUSTDATA_API_KEY is not set or when running in test/demo mode.
-Always tags records with is_mock=True to prevent confusing synthetic fixtures with real data.
+Used exclusively in DEMO mode or unit testing without API credits.
+Always tags records with is_mock=True and data_origin='DEMO' to prevent
+confusing synthetic fixtures with real production data.
 """
 
 import uuid
@@ -25,26 +26,25 @@ from app.services.crustdata.schemas import (
 
 
 class CrustdataMockProvider:
-    """Provides structured, high-fidelity mock data for entities requested in testing."""
+    """Provides structured, high-fidelity mock data strictly for DEMO mode."""
 
     MOCK_CREDITS = CrustdataCreditsInfo(
-        total_credits=1000.0,
-        remaining_credits=842.5,
-        used_credits=157.5,
+        total_credits=1450.0,
+        remaining_credits=1450.0,
+        used_credits=0.0,
         renewal_date="2026-12-01T00:00:00Z",
         enabled_endpoints=[
-            "/screener/company/search",
-            "/screener/company/enrich",
-            "/screener/person/search",
-            "/screener/person/enrich",
-            "/screener/job/search",
-            "/web/search/live",
+            "/company/search",
+            "/company/enrich",
+            "/person/search",
+            "/person/enrich",
+            "/job/search",
+            "/company/search/autocomplete",
             "/account/credits",
         ],
         is_mock=True,
     )
 
-    # Known high-fidelity company mock profiles
     MOCK_COMPANIES: Dict[str, Dict[str, Any]] = {
         "spacex": {
             "name": "SpaceX",
@@ -139,11 +139,11 @@ class CrustdataMockProvider:
             "primary_domain": "datadoghq.com",
             "website": "https://www.datadoghq.com",
             "linkedin_url": "https://www.linkedin.com/company/datadog",
-            "description": "Cloud monitoring and observability service for enterprise cloud applications.",
-            "industry": "Developer Tools & Observability",
-            "headcount": "5,000 - 10,000 employees",
-            "annual_revenue_range": "$2B - $3B",
-            "headquarters": "New York, NY, USA",
+            "description": "Essential observability and security platform for cloud applications.",
+            "industry": "Cloud Observability & Security",
+            "headcount": "5,000+ employees",
+            "annual_revenue_range": "$2B+",
+            "headquarters": "New York, New York, USA",
             "founding_year": 2010,
             "technographics": [
                 {"name": "AWS", "category": "Cloud Provider", "classification": "VERIFIED"},
@@ -161,7 +161,6 @@ class CrustdataMockProvider:
         },
     }
 
-    # Known high-fidelity person mock profiles
     MOCK_PEOPLE: Dict[str, Dict[str, Any]] = {
         "elon musk": {
             "full_name": "Elon Musk",
@@ -200,6 +199,23 @@ class CrustdataMockProvider:
             ],
             "skills": ["Artificial Intelligence", "Corporate Strategy", "Venture Capital", "Product Management"],
         },
+        "olivier pomel": {
+            "full_name": "Olivier Pomel",
+            "current_title": "Co-founder & CEO",
+            "current_company": "Datadog",
+            "headline": "CEO at Datadog",
+            "location": "New York, New York, USA",
+            "linkedin_url": "https://www.linkedin.com/in/olivierpomel",
+            "twitter_url": "https://twitter.com/olivierpomel",
+            "verified_work_email": "olivier@datadoghq.com",
+            "summary_bio": "Co-founder and CEO of Datadog, leading SaaS observability and cloud monitoring.",
+            "is_decision_maker": True,
+            "decision_maker_score": 0.99,
+            "work_history": [
+                {"company_name": "Datadog", "title": "CEO", "start_date": "2010-06", "is_current": True},
+            ],
+            "skills": ["Cloud Monitoring", "Observability", "Distributed Systems", "Enterprise SaaS"],
+        },
     }
 
     @classmethod
@@ -225,13 +241,26 @@ class CrustdataMockProvider:
                             location=c["headquarters"],
                             confidence_score=0.95,
                             is_mock=True,
+                            data_origin="DEMO",
+                            source="DEMO Mock Provider",
+                            verification_status="VERIFIED",
+                            buying_intent_status="INTELLIGENCE_ONLY",
+                            provenance={"name": "MOCK_FIXTURE", "primary_domain": "MOCK_FIXTURE"},
                         )
                     )
 
         # Check people
         if entity_type in (EntityType.PERSON, None):
+            person_slug = q_clean.replace("https://www.linkedin.com/in/", "").replace("https://linkedin.com/in/", "").strip("/")
             for key, p in cls.MOCK_PEOPLE.items():
-                if key in q_clean or q_clean in p["full_name"].lower():
+                p_url = p.get("linkedin_url", "").lower()
+                p_name = p["full_name"].lower()
+                if (
+                    key in q_clean
+                    or p_name in q_clean
+                    or q_clean in p_name
+                    or (p_url and (q_clean in p_url or person_slug in p_url or person_slug == key.replace(" ", "")))
+                ):
                     candidates.append(
                         EntityCandidate(
                             candidate_id=f"person_{key.replace(' ', '_')}",
@@ -244,29 +273,13 @@ class CrustdataMockProvider:
                             location=p["location"],
                             confidence_score=0.95,
                             is_mock=True,
+                            data_origin="DEMO",
+                            source="DEMO Mock Provider",
+                            verification_status="VERIFIED",
+                            buying_intent_status="INTELLIGENCE_ONLY",
+                            provenance={"name": "MOCK_FIXTURE", "current_title": "MOCK_FIXTURE", "current_company": "MOCK_FIXTURE"},
                         )
                     )
-
-        # Generic fallback candidate generator if not in pre-defined set
-        if not candidates:
-            is_likely_person = " " in query.strip() and not any(ext in q_clean for ext in [".com", ".io", ".org", ".ai", "corp", "inc", "ltd"])
-            cand_type = EntityType.PERSON if is_likely_person else EntityType.COMPANY
-            
-            clean_name = query.title().strip()
-            clean_dom = f"{q_clean.replace(' ', '')}.io" if cand_type == EntityType.COMPANY else None
-            
-            candidates.append(
-                EntityCandidate(
-                    candidate_id=f"gen_{uuid.uuid4().hex[:8]}",
-                    entity_type=cand_type,
-                    name=clean_name,
-                    primary_domain=clean_dom,
-                    headline=f"Synthetic profile for {clean_name}",
-                    location="Global / Remote",
-                    confidence_score=0.75,
-                    is_mock=True,
-                )
-            )
 
         return candidates[:limit]
 
@@ -277,8 +290,7 @@ class CrustdataMockProvider:
         level: EnrichmentLevel = EnrichmentLevel.LEVEL_2_STANDARD,
     ) -> CompanyIntelligenceProfile:
         q_clean = identifier.lower().strip().replace("https://", "").replace("http://", "").replace("www.", "").split("/")[0]
-        
-        # Match from known
+
         matched_key = None
         for key, c in cls.MOCK_COMPANIES.items():
             if key in q_clean or c["primary_domain"] in q_clean:
@@ -287,83 +299,79 @@ class CrustdataMockProvider:
 
         if matched_key:
             data = cls.MOCK_COMPANIES[matched_key]
-        else:
-            # Generic synthetic enterprise profile
-            company_name = q_clean.split(".")[0].capitalize()
-            data = {
-                "name": company_name,
-                "primary_domain": f"{q_clean.split('.')[0]}.io",
-                "website": f"https://{q_clean.split('.')[0]}.io",
-                "linkedin_url": f"https://www.linkedin.com/company/{q_clean.split('.')[0]}",
-                "description": f"{company_name} enterprise cloud infrastructure operations.",
-                "industry": "B2B Technology / SaaS",
-                "headcount": "250 - 1,000 employees",
-                "annual_revenue_range": "$20M - $50M",
-                "headquarters": "Austin, Texas, USA",
-                "founding_year": 2018,
-                "technographics": [],
-                "funding_rounds": [
-                    {"round_name": "Series B", "amount_usd": 35000000.0, "round_date": "2023-06-15", "investors": ["Benchmark", "Sequoia Capital"]},
-                ],
-                "total_funding_usd": 48000000.0,
-                "leadership": [
-                    {"name": f"Alex Morgan", "title": "VP of Infrastructure & DevOps", "linkedin": f"https://linkedin.com/in/alex-morgan-{q_clean.split('.')[0]}"},
-                ],
-                "active_jobs": [
-                    {"title": "Senior Cloud SRE", "department": "Platform Operations", "location": "Remote, US", "required_technologies": ["Datadog", "Kubernetes", "AWS"]},
-                ],
-            }
+            techs = [TechnographicItem(**t) for t in data.get("technographics", [])]
+            fundings = [FundingRoundItem(**f) for f in data.get("funding_rounds", [])]
+            jobs = [JobListingItem(**j) for j in data.get("active_jobs", [])]
 
-        techs = [TechnographicItem(**t) for t in data.get("technographics", [])]
-        fundings = [FundingRoundItem(**f) for f in data.get("funding_rounds", [])]
-        jobs = [JobListingItem(**j) for j in data.get("active_jobs", [])]
-
-        evidence_list = [
-            IntelligenceEvidenceItem(
-                data_category="FIRMOGRAPHICS",
-                claim=f"Operating domain verified as {data['primary_domain']}",
-                source_url=data.get("website"),
-                confidence=0.95,
-                verification_classification=VerificationClassification.VERIFIED,
-                metadata={"headcount": data.get("headcount"), "industry": data.get("industry")},
-            )
-        ]
-        for t in techs:
-            evidence_list.append(
+            evidence_list = [
                 IntelligenceEvidenceItem(
-                    data_category="TECHNOGRAPHICS",
-                    claim=f"Installed software: {t.name} ({t.category})",
-                    source_url=t.source_url or data.get("website"),
-                    confidence=0.90 if t.classification == VerificationClassification.VERIFIED else 0.70,
-                    verification_classification=t.classification,
+                    data_category="FIRMOGRAPHICS",
+                    claim=f"Operating domain verified as {data['primary_domain']}",
+                    source_url=data.get("website"),
+                    confidence=0.95,
+                    verification_classification=VerificationClassification.VERIFIED,
+                    metadata={"headcount": data.get("headcount"), "industry": data.get("industry")},
                 )
+            ]
+            for t in techs:
+                evidence_list.append(
+                    IntelligenceEvidenceItem(
+                        data_category="TECHNOGRAPHICS",
+                        claim=f"Installed software: {t.name} ({t.category})",
+                        source_url=t.source_url or data.get("website"),
+                        confidence=0.90 if t.classification == VerificationClassification.VERIFIED else 0.70,
+                        verification_classification=t.classification,
+                    )
+                )
+
+            credits = 1.0 if level == EnrichmentLevel.LEVEL_2_STANDARD else 15.0
+
+            return CompanyIntelligenceProfile(
+                entity_id=f"comp_{matched_key}",
+                name=data["name"],
+                primary_domain=data["primary_domain"],
+                website=data.get("website"),
+                linkedin_url=data.get("linkedin_url"),
+                description=data.get("description"),
+                industry=data.get("industry"),
+                headcount=data.get("headcount"),
+                annual_revenue_range=data.get("annual_revenue_range"),
+                headquarters=data.get("headquarters"),
+                founding_year=data.get("founding_year"),
+                technographics=techs,
+                funding_rounds=fundings,
+                total_funding_usd=data.get("total_funding_usd"),
+                leadership=data.get("leadership", []),
+                active_jobs=jobs,
+                evidence=evidence_list,
+                enrichment_level=level,
+                credits_consumed=credits,
+                data_freshness="REALTIME_CRAWL" if level == EnrichmentLevel.LEVEL_3_DEEP else "CACHED",
+                is_mock=True,
+                data_origin="DEMO",
+                source="DEMO Mock Provider",
+                verification_status="VERIFIED",
+                buying_intent_status="INTELLIGENCE_ONLY",
+                provenance={"name": "MOCK_FIXTURE", "primary_domain": "MOCK_FIXTURE"},
             )
-
-        credits = 1.0 if level == EnrichmentLevel.LEVEL_2_STANDARD else 15.0
-
-        return CompanyIntelligenceProfile(
-            entity_id=f"comp_{uuid.uuid4().hex[:8]}",
-            name=data["name"],
-            primary_domain=data["primary_domain"],
-            website=data.get("website"),
-            linkedin_url=data.get("linkedin_url"),
-            description=data.get("description"),
-            industry=data.get("industry"),
-            headcount=data.get("headcount"),
-            annual_revenue_range=data.get("annual_revenue_range"),
-            headquarters=data.get("headquarters"),
-            founding_year=data.get("founding_year"),
-            technographics=techs,
-            funding_rounds=fundings,
-            total_funding_usd=data.get("total_funding_usd"),
-            leadership=data.get("leadership", []),
-            active_jobs=jobs,
-            evidence=evidence_list,
-            enrichment_level=level,
-            credits_consumed=credits,
-            data_freshness="REALTIME_CRAWL" if level == EnrichmentLevel.LEVEL_3_DEEP else "CACHED",
-            is_mock=True,
-        )
+        else:
+            # Unknown entity in demo mode: return unverified profile without synthetic fabrication
+            comp_name = identifier.strip()
+            return CompanyIntelligenceProfile(
+                entity_id=f"comp_{uuid.uuid4().hex[:8]}",
+                name=comp_name,
+                primary_domain=f"{comp_name.lower().replace(' ', '')}.com" if "." not in comp_name else comp_name,
+                description=f"Company '{comp_name}' not found in demo fixtures.",
+                enrichment_level=level,
+                credits_consumed=0.0,
+                data_freshness="UNVERIFIED",
+                is_mock=True,
+                data_origin="DEMO",
+                source="DEMO Mock Provider",
+                verification_status="UNVERIFIED",
+                buying_intent_status="INTELLIGENCE_ONLY",
+                provenance={"name": "QUERY_INPUT"},
+            )
 
     @classmethod
     def enrich_person(
@@ -372,65 +380,97 @@ class CrustdataMockProvider:
         level: EnrichmentLevel = EnrichmentLevel.LEVEL_2_STANDARD,
     ) -> PersonIntelligenceProfile:
         q_clean = identifier.lower().strip()
+        person_slug = q_clean.replace("https://www.linkedin.com/in/", "").replace("https://linkedin.com/in/", "").strip("/")
+
         matched_key = None
         for key, p in cls.MOCK_PEOPLE.items():
-            if key in q_clean or p["full_name"].lower() in q_clean:
+            p_url = p.get("linkedin_url", "").lower()
+            p_name = p["full_name"].lower()
+            if (
+                key in q_clean
+                or p_name in q_clean
+                or (p_url and (q_clean in p_url or person_slug in p_url or person_slug == key.replace(" ", "")))
+            ):
                 matched_key = key
                 break
 
         if matched_key:
             data = cls.MOCK_PEOPLE[matched_key]
-        else:
-            name = identifier.title().strip()
-            data = {
-                "full_name": name,
-                "current_title": "VP of Engineering & Infrastructure",
-                "current_company": "Apex Dynamics",
-                "headline": f"Engineering Leader & Cloud Architect at Apex Dynamics",
-                "location": "San Francisco Bay Area, CA",
-                "linkedin_url": f"https://www.linkedin.com/in/{name.lower().replace(' ', '')}",
-                "verified_work_email": f"{name.lower().split()[0]}@apexdynamics.io" if " " in name else f"{name.lower()}@apexdynamics.io",
-                "summary_bio": f"Engineering leader specializing in multi-cloud infrastructure and DevOps.",
-                "is_decision_maker": True,
-                "decision_maker_score": 0.88,
-                "work_history": [
-                    {"company_name": "Apex Dynamics", "title": "VP of Engineering", "start_date": "2021-04", "is_current": True},
-                    {"company_name": "CloudScale Systems", "title": "Director of SRE", "start_date": "2018-01", "end_date": "2021-03", "is_current": False},
-                ],
-                "skills": ["Kubernetes", "Datadog", "Observability", "Cloud Cost Optimization", "Site Reliability Engineering"],
-            }
+            history = [WorkHistoryItem(**h) for h in data.get("work_history", [])]
+            evidence = [
+                IntelligenceEvidenceItem(
+                    data_category="PROFESSIONAL_IDENTITY",
+                    claim=f"{data['full_name']} verified as {data.get('current_title')} at {data.get('current_company')}",
+                    source_url=data.get("linkedin_url"),
+                    confidence=0.95,
+                    verification_classification=VerificationClassification.VERIFIED,
+                )
+            ]
+            credits = 1.0 if level == EnrichmentLevel.LEVEL_2_STANDARD else 12.0
 
-        history = [WorkHistoryItem(**h) for h in data.get("work_history", [])]
-        evidence = [
-            IntelligenceEvidenceItem(
-                data_category="PROFESSIONAL_IDENTITY",
-                claim=f"{data['full_name']} verified as {data.get('current_title')} at {data.get('current_company')}",
-                source_url=data.get("linkedin_url"),
-                confidence=0.92,
-                verification_classification=VerificationClassification.VERIFIED,
+            return PersonIntelligenceProfile(
+                entity_id=f"person_{matched_key.replace(' ', '_')}",
+                full_name=data["full_name"],
+                current_title=data.get("current_title"),
+                current_company=data.get("current_company"),
+                headline=data.get("headline"),
+                location=data.get("location"),
+                linkedin_url=data.get("linkedin_url"),
+                twitter_url=data.get("twitter_url"),
+                verified_work_email=data.get("verified_work_email"),
+                summary_bio=data.get("summary_bio"),
+                is_decision_maker=data.get("is_decision_maker", False),
+                decision_maker_score=data.get("decision_maker_score", 0.95),
+                work_history=history,
+                skills=data.get("skills", []),
+                evidence=evidence,
+                enrichment_level=level,
+                credits_consumed=credits,
+                data_freshness="REALTIME_CRAWL" if level == EnrichmentLevel.LEVEL_3_DEEP else "CACHED",
+                is_mock=True,
+                data_origin="DEMO",
+                source="DEMO Mock Provider",
+                verification_status="VERIFIED",
+                buying_intent_status="INTELLIGENCE_ONLY",
+                provenance={
+                    "full_name": "MOCK_FIXTURE",
+                    "current_title": "MOCK_FIXTURE",
+                    "current_company": "MOCK_FIXTURE",
+                    "linkedin_url": "MOCK_FIXTURE",
+                },
             )
-        ]
-
-        credits = 1.5 if level == EnrichmentLevel.LEVEL_2_STANDARD else 12.0
-
-        return PersonIntelligenceProfile(
-            entity_id=f"person_{uuid.uuid4().hex[:8]}",
-            full_name=data["full_name"],
-            current_title=data.get("current_title"),
-            current_company=data.get("current_company"),
-            headline=data.get("headline"),
-            location=data.get("location"),
-            linkedin_url=data.get("linkedin_url"),
-            twitter_url=data.get("twitter_url"),
-            verified_work_email=data.get("verified_work_email"),
-            summary_bio=data.get("summary_bio"),
-            is_decision_maker=data.get("is_decision_maker", False),
-            decision_maker_score=data.get("decision_maker_score", 0.5),
-            work_history=history,
-            skills=data.get("skills", []),
-            evidence=evidence,
-            enrichment_level=level,
-            credits_consumed=credits,
-            data_freshness="REALTIME_CRAWL" if level == EnrichmentLevel.LEVEL_3_DEEP else "CACHED",
-            is_mock=True,
-        )
+        else:
+            # Unknown entity: never synthesize fake company or role (e.g. Apex Dynamics)
+            name = identifier.title().strip()
+            return PersonIntelligenceProfile(
+                entity_id=f"person_{uuid.uuid4().hex[:8]}",
+                full_name=name,
+                current_title="Unverified Title",
+                current_company="Unknown Entity",
+                headline=f"Unverified entity profile for {name}",
+                location="Location Unverified",
+                linkedin_url=identifier if "http" in identifier else None,
+                verified_work_email=None,
+                summary_bio="Entity not recognized in demo fixtures. Identity unverified.",
+                is_decision_maker=False,
+                decision_maker_score=0.0,
+                work_history=[],
+                skills=[],
+                evidence=[
+                    IntelligenceEvidenceItem(
+                        data_category="PROFESSIONAL_IDENTITY",
+                        claim=f"No verified professional record found for {name}",
+                        confidence=0.20,
+                        verification_classification=VerificationClassification.UNKNOWN,
+                    )
+                ],
+                enrichment_level=level,
+                credits_consumed=0.0,
+                data_freshness="UNVERIFIED",
+                is_mock=True,
+                data_origin="DEMO",
+                source="DEMO Mock Provider",
+                verification_status="UNVERIFIED",
+                buying_intent_status="INTELLIGENCE_ONLY",
+                provenance={"full_name": "QUERY_INPUT"},
+            )

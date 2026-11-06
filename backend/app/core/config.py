@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     CRUSTDATA_MIN_CREDIT_THRESHOLD: int = 5
     CRUSTDATA_CACHE_TTL_DAYS: int = 7
     CRUSTDATA_ENABLE_MOCK: bool = True  # Fallback when key is missing or for synthetic testing
+    CRUSTDATA_INITIAL_BUDGET: float = 1200.0  # Application spending budget (credits)
+    CRUSTDATA_NEAR_LIMIT_PERCENT: float = 80.0  # Threshold % for Near Limit status
 
     model_config = SettingsConfigDict(
         env_file=(str(Path(__file__).resolve().parent.parent.parent / ".env"), ".env"),

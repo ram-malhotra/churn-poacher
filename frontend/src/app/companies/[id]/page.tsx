@@ -29,7 +29,7 @@ import { Header } from "@/components/layout/Header";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/Card";
 import { Badge, StatusBadge, EvidenceBadge } from "@/components/ui/Badge";
 import { CodeViewer } from "@/components/ui/CodeViewer";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, formatDecisionMaker } from "@/lib/utils";
 
 export default function CompanyDossierPage() {
   const params = useParams();
@@ -265,13 +265,19 @@ export default function CompanyDossierPage() {
                   </div>
                 </div>
 
-                {company.decision_makers && company.decision_makers.length > 0 && (
+                {company.decision_makers && Array.isArray(company.decision_makers) && company.decision_makers.length > 0 && (
                   <div className="pt-2">
                     <span className="text-[11px] font-mono text-gray-400 uppercase block mb-1">Target Decision Makers</span>
                     <div className="flex flex-wrap gap-2">
-                      {company.decision_makers.map((dm, idx) => (
-                        <Badge key={idx} variant="purple">{dm}</Badge>
-                      ))}
+                      {company.decision_makers.map((dm, idx) => {
+                        const label = formatDecisionMaker(dm);
+                        if (!label) return null;
+                        return (
+                          <Badge key={idx} variant="purple">
+                            {label}
+                          </Badge>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

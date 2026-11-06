@@ -18,7 +18,7 @@ class CrustdataAPIError(CrustdataError):
 
 
 class CrustdataCreditDepletedError(CrustdataError):
-    """Raised when an operation would violate the credit safety threshold."""
+    """Raised when an operation would violate the account credit safety threshold."""
     def __init__(self, current_balance: float, required_credits: float, min_threshold: float):
         super().__init__(
             f"Insufficient Crustdata credits: current balance {current_balance:.1f}, "
@@ -27,6 +27,20 @@ class CrustdataCreditDepletedError(CrustdataError):
         self.current_balance = current_balance
         self.required_credits = required_credits
         self.min_threshold = min_threshold
+
+
+class CrustdataBudgetExhaustedError(CrustdataError):
+    """Raised when the application-level Crustdata spending budget (e.g. 1,200 credits) is exhausted."""
+    def __init__(self, budget: float, used: float, remaining: float, required_credits: float):
+        super().__init__(
+            f"Crustdata application budget exhausted: {used:.1f}/{budget:.1f} credits used "
+            f"({remaining:.1f} remaining, required {required_credits:.1f}). "
+            f"User approval required to increase budget and resume paid operations."
+        )
+        self.budget = budget
+        self.used = used
+        self.remaining = remaining
+        self.required_credits = required_credits
 
 
 class CrustdataRateLimitError(CrustdataError):

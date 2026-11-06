@@ -1,7 +1,7 @@
 """
 Crustdata Intelligence Extraction API Endpoints.
 Provides REST routes for Level 1 Search, Level 2 Standard Enrichment, Level 3 Deep Enrichment,
-Credit Inspection, Search History, and Intelligence Report Exports.
+Credit Inspection, Application Budget Management, Search History, and Intelligence Report Exports.
 """
 
 from typing import Optional, List, Dict, Any, Union
@@ -10,16 +10,21 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 
+from app.core.logging import logger
 from app.db.session import get_db
 from app.models.intelligence import (
     IntelligenceEntity,
     IntelligenceSearch,
     IntelligenceEvidence,
+    CrustdataBudgetHistory,
 )
 from app.services.crustdata.intelligence_service import CrustdataIntelligenceService
+from app.services.crustdata.query_interpreter import CrustdataQueryInterpreter
+from app.services.crustdata.credit_guard import CreditGuard
 from app.services.crustdata.exceptions import (
     CrustdataError,
     CrustdataCreditDepletedError,
+    CrustdataBudgetExhaustedError,
     CrustdataAuthError,
     CrustdataRateLimitError,
 )
@@ -29,6 +34,9 @@ from app.services.crustdata.schemas import (
     EntitySearchRequest,
     EntitySearchResponse,
     CrustdataCreditsInfo,
+    CrustdataBudgetStatus,
+    BudgetIncreaseRequest,
+    BudgetHistoryItem,
     CompanyIntelligenceProfile,
     PersonIntelligenceProfile,
     DeepEnrichmentCostEstimate,
@@ -45,6 +53,11 @@ class EntityEnrichmentRequest(BaseModel):
     level: EnrichmentLevel = Field(default=EnrichmentLevel.LEVEL_2_STANDARD)
     force_refresh: bool = Field(default=False, description="Bypass local 7-day cache")
     confirmation_confirmed: bool = Field(default=False, description="User confirmation for Level 3 Deep Enrichment")
+    mode: str = Field(default="LIVE", description="LIVE (Crustdata API v2) or DEMO (Isolated mock)")
+
+
+class InterpretQueryRequest(BaseModel):
+    query: str
 
 
 class ExportIntelligenceRequest(BaseModel):
@@ -55,7 +68,7 @@ class ExportIntelligenceRequest(BaseModel):
 @router.get("/credits", response_model=CrustdataCreditsInfo)
 async def get_credits():
     """
-    Returns active Crustdata credit balances, renewal schedule, and enabled endpoints.
+    Returns active Crustdata account credit balances, renewal schedule, and enabled endpoints.
     Free endpoint (consumes 0 credits).
     """
     try:
@@ -65,6 +78,91 @@ async def get_credits():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch Crustdata credit status: {str(e)}",
         )
+
+
+@router.get("/budget", response_model=CrustdataBudgetStatus)
+async def get_budget_status(db: AsyncSession = Depends(get_db)):
+    """
+    Returns application-level Crustdata spending budget, tracked cumulative usage,
+    remaining budget, usage percentage, and status (Active / Near Limit / Exhausted).
+    """
+    account_credits = None
+    try:
+        account_credits = await intelligence_service.client.get_account_credits()
+    except Exception as e:
+        logger.warning(f"Could not refresh live account credits for budget status: {e}")
+
+    return await CreditGuard.get_budget_status_async(db=db, credits_info=account_credits)
+
+
+@router.post("/budget/increase", response_model=CrustdataBudgetStatus)
+async def increase_budget(
+    request: BudgetIncreaseRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Increases the application-level Crustdata spending budget upon explicit user approval.
+    Records the budget increase event in the audit history.
+    """
+    if request.amount <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Budget increase amount must be strictly positive.",
+        )
+
+    try:
+        return await CreditGuard.increase_budget_async(
+            amount=request.amount,
+            reason=request.reason or "User-approved budget increase",
+            approved_by=request.approved_by or "User",
+            db=db,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to increase budget: {str(e)}",
+        )
+
+
+@router.get("/budget/history", response_model=List[BudgetHistoryItem])
+async def get_budget_history(
+    limit: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns the audit trail of all budget increases and credit usage transactions.
+    """
+    stmt = (
+        select(CrustdataBudgetHistory)
+        .order_by(desc(CrustdataBudgetHistory.created_at))
+        .limit(limit)
+    )
+    res = await db.execute(stmt)
+    records = res.scalars().all()
+    return [
+        BudgetHistoryItem(
+            id=r.id,
+            action=r.action,
+            amount=r.amount,
+            budget_before=r.budget_before,
+            budget_after=r.budget_after,
+            used_before=r.used_before,
+            used_after=r.used_after,
+            notes=r.notes,
+            is_mock=r.is_mock,
+            approved_by=r.approved_by,
+            created_at=r.created_at,
+        )
+        for r in records
+    ]
+
+
+@router.post("/interpret-query")
+async def interpret_query(request: InterpretQueryRequest):
+    """
+    Interprets natural language discovery query into target entity, filters, and intent explanation.
+    """
+    return CrustdataQueryInterpreter.interpret(request.query)
 
 
 @router.post("/search", response_model=EntitySearchResponse)
@@ -83,6 +181,19 @@ async def search_entities(
             query=request.query,
             entity_type=request.entity_type,
             limit=request.limit,
+            mode=request.mode,
+        )
+    except CrustdataBudgetExhaustedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error_type": "BUDGET_EXHAUSTED",
+                "message": str(e),
+                "budget": e.budget,
+                "used": e.used,
+                "remaining": e.remaining,
+                "required_credits": e.required_credits,
+            },
         )
     except CrustdataCreditDepletedError as e:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(e))
@@ -113,6 +224,19 @@ async def enrich_entity(
             level=request.level,
             force_refresh=request.force_refresh,
             confirmation_confirmed=request.confirmation_confirmed,
+            mode=request.mode,
+        )
+    except CrustdataBudgetExhaustedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error_type": "BUDGET_EXHAUSTED",
+                "message": str(e),
+                "budget": e.budget,
+                "used": e.used,
+                "remaining": e.remaining,
+                "required_credits": e.required_credits,
+            },
         )
     except CrustdataCreditDepletedError as e:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(e))
