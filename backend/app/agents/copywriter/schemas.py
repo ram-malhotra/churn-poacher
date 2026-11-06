@@ -10,12 +10,12 @@ from pydantic import BaseModel, Field
 
 class EmailVariant(BaseModel):
     """Structured email collateral variant tailored to specific executive personas."""
-    variant_type: str  # EXECUTIVE_CONCISE or TECHNICAL_COMMERCIAL
-    target_role: str  # e.g., "CTO / VP Engineering", "Head of Infrastructure / FinOps Lead"
-    subject_lines: List[str] = Field(..., min_length=3, description="3 subject lines with distinct hooks")
-    preheader: str
-    body_markdown: str
-    call_to_action: str
+    variant_type: str = "EXECUTIVE_CONCISE"  # EXECUTIVE_CONCISE or TECHNICAL_COMMERCIAL
+    target_role: str = "CTO / VP Engineering"  # e.g., "CTO / VP Engineering", "Head of Infrastructure / FinOps Lead"
+    subject_lines: List[str] = Field(default_factory=list, description="3 subject lines with distinct hooks")
+    preheader: str = ""
+    body_markdown: str = ""
+    call_to_action: str = ""
     referenced_attachments: List[str] = Field(default_factory=list)
 
 
@@ -28,28 +28,28 @@ class LinkedInSequence(BaseModel):
 
 class TechnicalMigrationPitch(BaseModel):
     """Deep-dive technical migration brief for engineering leadership."""
-    title: str
-    target_audience: str
+    title: str = "OpenTelemetry Technical Migration Brief"
+    target_audience: str = "Engineering Leadership"
     architecture_comparison: Dict[str, str] = Field(default_factory=dict)
-    zero_code_migration_path: str
-    dual_shipping_poc: str
-    alert_and_dashboard_parity: str
-    timeline_and_effort: str
-    full_pitch_markdown: str
+    zero_code_migration_path: str = ""
+    dual_shipping_poc: str = ""
+    alert_and_dashboard_parity: str = ""
+    timeline_and_effort: str = ""
+    full_pitch_markdown: str = ""
 
 
 class ValuePropositionSummary(BaseModel):
     """Structured 1-page financial business case and TCO analysis."""
-    executive_summary: str
-    current_estimated_runrate_annual: float
-    target_alternative_runrate_annual: float
-    annual_savings_usd: float
-    savings_percentage: float
+    executive_summary: str = ""
+    current_estimated_runrate_annual: float = 0.0
+    target_alternative_runrate_annual: float = 0.0
+    annual_savings_usd: float = 0.0
+    savings_percentage: float = 0.0
     datadog_tax_breakdown: Dict[str, str] = Field(default_factory=dict)
-    tco_payback_period_months: float
-    three_year_net_savings_usd: float
+    tco_payback_period_months: float = 0.0
+    three_year_net_savings_usd: float = 0.0
     risk_vs_reward: List[Dict[str, str]] = Field(default_factory=list)
-    full_value_prop_markdown: str
+    full_value_prop_markdown: str = ""
 
 
 class ObjectionItem(BaseModel):

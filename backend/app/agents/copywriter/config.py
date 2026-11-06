@@ -1,11 +1,11 @@
 """
 Configuration and Tone Guidelines for the Copywriter Agent.
-Enforces engineering-led, peer-to-peer tone and anti-spam constraints.
+Enforces engineering-led, peer-to-peer tone, realistic effort scoping, and anti-spam constraints.
 """
 
 from typing import List, Dict, Any
 
-# Forbidden spammy or sensationalist buzzwords
+# Forbidden spammy, sensationalist, or unsubstantiated marketing buzzwords
 FORBIDDEN_BUZZWORDS: List[str] = [
     "game-changing",
     "game changing",
@@ -22,6 +22,10 @@ FORBIDDEN_BUZZWORDS: List[str] = [
     "secret sauce",
     "no-brainer",
     "growth hack",
+    "risk-free",
+    "risk free",
+    "zero risk",
+    "zero downtime guaranteed",
 ]
 
 # Supported executive personas and their primary focus areas
@@ -34,13 +38,13 @@ PERSONA_PROFILES: Dict[str, Dict[str, Any]] = {
     },
     "VP_ENGINEERING": {
         "title": "VP of Engineering",
-        "primary_focus": "Developer velocity, minimal migration friction, zero-code receiver compatibility (:8126)",
-        "tone": "Pragmatic, engineering-focused, risk-averse",
-        "cta": "Technical peer review of the dual-shipping PoC blueprint",
+        "primary_focus": "Developer velocity, minimal migration friction, OpenTelemetry Collector compatibility",
+        "tone": "Pragmatic, engineering-focused, risk-conscious",
+        "cta": "Technical peer review of the migration blueprint",
     },
     "HEAD_OF_INFRA": {
         "title": "Head of Infrastructure / DevOps Director",
-        "primary_focus": "DaemonSet migration, OpenTelemetry Collector pipelines, alert/dashboard parity, ClickHouse performance",
+        "primary_focus": "DaemonSet rollout, OpenTelemetry Collector signal pipelines, alert/dashboard parity, ClickHouse performance",
         "tone": "Deeply technical, hands-on, architectural",
         "cta": "Review of the OpenTelemetry Collector YAML and rollout plan",
     },
@@ -52,69 +56,69 @@ PERSONA_PROFILES: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# Standard enterprise objection catalog
-STANDARD_OBJECTIONS = [
+# Standard enterprise objection catalog with realistic talking points
+STANDARD_OBJECTIONS: List[Dict[str, Any]] = [
     {
         "id": "BANDWIDTH",
         "objection": "We don't have the engineering bandwidth for a complex monitoring migration right now.",
         "talking_points": [
-            "Datadog agent receiver (:8126) enables zero-code application changes for existing dd-trace instrumentation.",
-            "Dual-shipping OpenTelemetry collector runs alongside existing agents without disrupting application teams.",
-            "Total migration engineering effort is modeled at 60-80 engineering hours across a 7-phase timeline.",
+            "Infrastructure-layer collector deployment decouples platform setup from application development teams.",
+            "Migration effort is partitioned into 12 discrete components across a phased 6-week schedule.",
+            "Canarying high-cost services first yields immediate ROI without requiring an all-at-once migration.",
         ],
     },
     {
         "id": "DOWNTIME_RISK",
         "objection": "Switching our core observability vendor risks blind spots and production downtime.",
         "talking_points": [
-            "Dual-shipping architecture guarantees 100% telemetry continuity with zero production disruption.",
-            "Both Datadog and the target challenger receive identical telemetry in parallel during testing.",
-            "Datadog is only decommissioned after 100% dashboard, trace, and alert parity is signed off.",
+            "Dual-shipping telemetry architecture maintains incumbent coverage continuously during validation.",
+            "Exporter queues have independent backpressure isolation; target hiccups cannot block incumbent ingestion.",
+            "Incumbent agents are only decommissioned after 14 days of confirmed alert and metric parity.",
         ],
     },
     {
         "id": "CONTRACT_LOCKIN",
-        "objection": "We are locked into an annual contract with Datadog with several months remaining.",
+        "objection": "We are locked into an annual contract with our incumbent vendor with several months remaining.",
         "talking_points": [
             "Deploying the OpenTelemetry collector now stops unexpected overages and custom metric spikes immediately.",
-            "Dual-shipping POC can be completed well ahead of renewal, giving full leverage during contract discussions.",
-            "Avoids last-minute renewal pressure by having production-validated alternative ready on day one.",
+            "Validating the alternative 60-90 days prior to contract renewal provides concrete procurement leverage.",
+            "Avoids rushed renewal negotiations by having a production-ready alternative tested and approved.",
         ],
     },
     {
         "id": "HISTORICAL_DATA",
         "objection": "We cannot afford to lose our historical metrics, monitors, and custom dashboards.",
         "talking_points": [
-            "Existing Datadog dashboards and alerts map directly to OpenTelemetry and PromQL equivalents.",
-            "Automated converter scripts translate Datadog monitor JSON into PromQL alert definitions.",
-            "Historical log retention can remain in cold storage / S3 while active query pipelines cut over seamlessly.",
+            "Datadog monitor JSON definitions translate systematically into PromQL and SigNoz alert rules.",
+            "Historical compliance logs can be archived to low-cost cloud storage (S3/GCS) without paying re-indexing fees.",
+            "Operational dashboards for Kubernetes and APM map to standardized Grafana / SigNoz community templates.",
         ],
     },
     {
         "id": "SELF_HOSTED_BURDEN",
         "objection": "Managing open source ClickHouse or self-hosted observability creates excessive operational burden.",
         "talking_points": [
-            "SigNoz Cloud and Grafana Cloud offer enterprise managed SaaS with 99.9% SLAs and zero infrastructure maintenance.",
-            "Managed cloud pricing still delivers 40-70% lower TCO by eliminating host tax and per-host APM penalties.",
-            "If self-hosted is preferred, automated Helm charts and operator patterns minimize maintenance overhead.",
+            "SigNoz Cloud offers a fully managed enterprise SaaS with 99.9% availability SLAs and automated ClickHouse operations.",
+            "Managed cloud pricing retains 40-70% lower TCO than Datadog by charging strictly for ingestion volume without host taxes.",
+            "Internal platform engineers never have to provision, shard, or maintain ClickHouse clusters.",
         ],
     },
     {
         "id": "STATUS_QUO",
         "objection": "Datadog works fine for us despite the cost, so why change?",
         "talking_points": [
-            "Adopting the CNCF OpenTelemetry standard protects your architecture from compounding proprietary lock-in.",
-            "Eliminating the per-host tax allows scaling compute (e.g. Kubernetes nodes) without monitoring cost explosion.",
-            "Reinvesting $50k-$200k+ in monitoring savings directly into core product engineering.",
+            "Migration is not universally required; if telemetry spend is under $15k/yr, remaining on Datadog is often optimal.",
+            "When infrastructure scales dynamically (Kubernetes pod autoscaling), the per-host tax compounds faster than headcount.",
+            "Adopting standard OpenTelemetry protects the company from future proprietary pricing restructuring.",
         ],
     },
     {
         "id": "ROLLBACK_SAFETY",
         "objection": "What happens if the migration fails halfway through?",
         "talking_points": [
-            "Built-in zero-loss rollback strategy: simply disable the target exporter in the OTel collector.",
-            "Datadog agent ingestion is never removed until final Stage 7 sign-off.",
-            "Zero state loss and zero telemetry downtime guaranteed by dual-pipeline design.",
+            "Tested rollback procedure: disabling the target exporter in collector configuration instantly restores exclusive incumbent routing.",
+            "Incumbent agents remain active throughout testing phases, preserving normal operational workflows.",
+            "Acknowledge limitation: telemetry recorded only in the target platform cannot be reverse-synchronized into Datadog.",
         ],
     },
 ]

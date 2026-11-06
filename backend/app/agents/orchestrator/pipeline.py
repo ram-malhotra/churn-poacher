@@ -434,6 +434,15 @@ class PipelineRunner:
                 "signoz_annual": base_scenario.signoz_cloud_annual if base_scenario else 0.0,
                 "estimated_annual_savings": base_scenario.signoz_cloud_annual_savings if base_scenario else 0.0,
                 "payback_period_months": base_scenario.payback_period_months if base_scenario else 0.0,
+                "recurring_annual_savings": base_scenario.recurring_annual_savings if base_scenario else 0.0,
+                "net_first_year_savings": base_scenario.net_first_year_savings if base_scenario else 0.0,
+                "total_one_time_investment": base_scenario.total_one_time_investment if base_scenario else 0.0,
+                "migration_labor_cost": base_scenario.migration_labor_cost if base_scenario else 0.0,
+                "dual_shipping_overlap_cost": base_scenario.dual_shipping_overlap_cost if base_scenario else 0.0,
+                "is_verified_spend": fin_report.is_verified_spend,
+                "disclaimer": fin_report.disclaimer,
+                "scenarios": {k: v.model_dump(mode="json") for k, v in fin_report.scenarios.items()},
+                "base_scenario": base_scenario.model_dump(mode="json") if base_scenario else {},
                 "report": fin_report.model_dump(mode="json"),
             }
             blueprint_dict = arch_blueprint.model_dump(mode="json")

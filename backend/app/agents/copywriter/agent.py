@@ -38,13 +38,22 @@ class CopywriterAgent:
         target_vendor: str = "Datadog",
     ) -> OutreachPackage:
         """Generates the complete audited outreach collateral package."""
+        is_generic = (
+            not company.domain
+            or company.id == "unknown"
+            or company.qualification_status == "REJECTED"
+            or getattr(company, "verification_status", None) == "UNKNOWN"
+        )
+        display_name = "Generic Organization (Reference Architecture)" if is_generic else company.name
+
         company_data = {
-            "name": company.name,
+            "name": display_name,
             "domain": company.domain,
             "industry": company.industry or "Technology",
             "estimated_size": company.estimated_size or "50-250 employees",
             "icp_score": company.icp_score,
             "qualification_status": company.qualification_status,
+            "is_generic": is_generic,
         }
 
         signal_data = {
@@ -83,7 +92,7 @@ class CopywriterAgent:
                     base_savings = float(finops["scenarios"]["BASE"].get("signoz_cloud_annual_savings", 0.0))
 
                 refined = await LLMIntelligenceService.polish_personalized_outreach(
-                    company_name=company.name,
+                    company_name=display_name,
                     baseline_body=primary_body,
                     verified_savings_usd=base_savings,
                     target_backend=target_challenger,
@@ -91,7 +100,7 @@ class CopywriterAgent:
                 if refined and refined.subject_lines and refined.polished_body:
                     subjects = list(refined.subject_lines)
                     while len(subjects) < 3:
-                        subjects.append(f"{company.name} Datadog migration blueprint")
+                        subjects.append(f"{display_name} OpenTelemetry migration blueprint")
 
                     refined_variant = EmailVariant(
                         variant_type="LLM_POLISHED_EXECUTIVE",
@@ -99,24 +108,22 @@ class CopywriterAgent:
                         subject_lines=subjects[:3],
                         preheader=refined.opening_hook[:120],
                         body_markdown=refined.polished_body,
-                        call_to_action=refined.call_to_action,
-                        referenced_attachments=["otel-collector-production.yaml", "financial-delta-matrix.pdf"],
+                        call_to_action="Schedule an architectural review",
+                        referenced_attachments=["OpenTelemetry Collector Blueprint YAML"],
                     )
-                    executive_emails.append(refined_variant)
+                    executive_emails.insert(0, refined_variant)
             except Exception:
-                # Fallback to deterministic variants
                 pass
 
-        # 3. Compile full text corpus for Evidence Guard audit
+        # 3. Assemble corpus for Evidence Guard Audit
         corpus_parts = [
-            *[e.body_markdown for e in executive_emails],
-            *[line for e in executive_emails for line in e.subject_lines],
+            "\n".join([em.body_markdown for em in executive_emails]),
             linkedin_seq.step_1_connection_request,
             linkedin_seq.step_2_value_add,
             linkedin_seq.step_3_technical_commercial,
             technical_pitch.full_pitch_markdown,
             value_prop.full_value_prop_markdown,
-            *[item.recommended_response for item in objection_matrix.items],
+            "\n".join([obj.recommended_response for obj in objection_matrix.items]),
         ]
         text_corpus = "\n\n".join(corpus_parts)
 
@@ -131,7 +138,7 @@ class CopywriterAgent:
 
         # 5. Assemble Package
         package = OutreachPackage(
-            company_name=company.name,
+            company_name=display_name,
             company_id=company.id,
             target_challenger=target_challenger,
             distress_category=context["distress_tag"],
@@ -236,6 +243,8 @@ class CopywriterAgent:
 
         return {
             "dossier_id": dossier.id,
+            "company_id": company.id,
             "status": dossier.status,
+            "audit_passed": package.evidence_audit.passed,
             "outreach_package": package_dict,
         }
