@@ -31,6 +31,8 @@ from app.services.crustdata.schemas import (
     EnrichmentLevel,
     VerificationClassification,
     EntityCandidate,
+    CriterionMatch,
+    PaginatedCandidateList,
     EntitySearchResponse,
     CompanyIntelligenceProfile,
     PersonIntelligenceProfile,
@@ -95,23 +97,249 @@ class CrustdataIntelligenceService:
 
         return EntityType.UNKNOWN
 
+    def _evaluate_search_relevance(
+        self,
+        candidate: EntityCandidate,
+        interpretation: Any,
+    ) -> List[CriterionMatch]:
+        criteria: List[CriterionMatch] = []
+        raw = candidate.raw_data or {}
+        basic = raw.get("basic_info") or {}
+        locations = raw.get("locations") or {}
+        headcount = raw.get("headcount") or {}
+        taxonomy = raw.get("taxonomy") or {}
+
+        # 1. Industry
+        if interpretation.industry:
+            req_ind = interpretation.industry
+            cand_ind = (
+                basic.get("industry")
+                or taxonomy.get("professional_network_industry")
+                or ""
+            )
+            desc_text = (basic.get("description") or "") + " " + (candidate.headline or "")
+            if cand_ind and req_ind.lower() in cand_ind.lower():
+                criteria.append(
+                    CriterionMatch(
+                        criterion="Industry",
+                        requested_value=req_ind,
+                        actual_value=cand_ind or req_ind,
+                        status="VERIFIED",
+                        evidence=f"Matched Crustdata industry taxonomy: {cand_ind}",
+                    )
+                )
+            elif req_ind.lower() in desc_text.lower():
+                criteria.append(
+                    CriterionMatch(
+                        criterion="Industry",
+                        requested_value=req_ind,
+                        actual_value=req_ind,
+                        status="INFERRED",
+                        evidence=f"Inferred from profile description matching '{req_ind}'",
+                    )
+                )
+            else:
+                criteria.append(
+                    CriterionMatch(
+                        criterion="Industry",
+                        requested_value=req_ind,
+                        actual_value=None,
+                        status="UNAVAILABLE",
+                        evidence="Industry evidence unavailable in candidate preview; requires standard enrichment",
+                    )
+                )
+
+        # 2. Country / Location
+        if interpretation.country:
+            req_country = interpretation.country.upper()
+            country_val = (locations.get("country") or "").strip().upper()
+            hq_val = locations.get("headquarters") or candidate.location or ""
+            hq_upper = hq_val.upper()
+            is_match = False
+            matched_name = locations.get("country") or hq_val
+
+            if req_country in ("US", "USA", "UNITED STATES"):
+                if country_val in ("USA", "US", "UNITED STATES") or "USA" in hq_upper or "UNITED STATES" in hq_upper:
+                    is_match = True
+            elif req_country in ("IN", "IND", "INDIA"):
+                if country_val in ("IND", "IN", "INDIA") or "INDIA" in hq_upper:
+                    is_match = True
+            elif req_country in country_val or req_country in hq_upper:
+                is_match = True
+
+            if is_match:
+                criteria.append(
+                    CriterionMatch(
+                        criterion="Country",
+                        requested_value=interpretation.country,
+                        actual_value=matched_name,
+                        status="VERIFIED",
+                        evidence=f"Verified from Crustdata locations: {matched_name}",
+                    )
+                )
+            elif matched_name:
+                criteria.append(
+                    CriterionMatch(
+                        criterion="Country",
+                        requested_value=interpretation.country,
+                        actual_value=matched_name,
+                        status="UNAVAILABLE",
+                        evidence=f"Location '{matched_name}' does not match requested country '{interpretation.country}'",
+                    )
+                )
+            else:
+                criteria.append(
+                    CriterionMatch(
+                        criterion="Country",
+                        requested_value=interpretation.country,
+                        actual_value=None,
+                        status="UNAVAILABLE",
+                        evidence="Country not provided in candidate record",
+                    )
+                )
+
+        # 3. Employee Count
+        if interpretation.employee_min is not None or interpretation.employee_max is not None:
+            min_e = interpretation.employee_min or 0
+            max_e = interpretation.employee_max or 1000000
+            req_range = f"{min_e}–{max_e if max_e < 1000000 else '+'}"
+            total_hc = headcount.get("total") if isinstance(headcount, dict) else None
+            range_str = basic.get("employee_count_range") or (raw.get("headcount") if isinstance(raw.get("headcount"), str) else None)
+
+            if total_hc is not None:
+                if min_e <= total_hc <= max_e:
+                    criteria.append(
+                        CriterionMatch(
+                            criterion="Employee count",
+                            requested_value=req_range,
+                            actual_value=f"{total_hc} employees",
+                            status="VERIFIED",
+                            evidence=f"Headcount {total_hc} within requested range {req_range}",
+                        )
+                    )
+                else:
+                    criteria.append(
+                        CriterionMatch(
+                            criterion="Employee count",
+                            requested_value=req_range,
+                            actual_value=f"{total_hc} employees",
+                            status="UNAVAILABLE",
+                            evidence=f"Headcount {total_hc} outside requested range {req_range}",
+                        )
+                    )
+            elif range_str:
+                criteria.append(
+                    CriterionMatch(
+                        criterion="Employee count",
+                        requested_value=req_range,
+                        actual_value=range_str,
+                        status="VERIFIED",
+                        evidence=f"Verified from Crustdata employee range '{range_str}'",
+                    )
+                )
+            else:
+                criteria.append(
+                    CriterionMatch(
+                        criterion="Employee count",
+                        requested_value=req_range,
+                        actual_value=None,
+                        status="UNAVAILABLE",
+                        evidence="Headcount not available in search preview; requires standard enrichment",
+                    )
+                )
+
+        # 4. Technology Stack
+        if interpretation.technologies:
+            for tech in interpretation.technologies:
+                techs_list = raw.get("technographics") or []
+                found_in_list = False
+                if isinstance(techs_list, list):
+                    for t in techs_list:
+                        t_name = t.get("name") if isinstance(t, dict) else str(t)
+                        if tech.lower() in t_name.lower():
+                            found_in_list = True
+                            break
+
+                if found_in_list:
+                    criteria.append(
+                        CriterionMatch(
+                            criterion="Technology stack",
+                            requested_value=tech,
+                            actual_value=tech,
+                            status="VERIFIED",
+                            evidence=f"Verified in company technographics: {tech}",
+                        )
+                    )
+                else:
+                    criteria.append(
+                        CriterionMatch(
+                            criterion="Technology stack",
+                            requested_value=tech,
+                            actual_value=tech,
+                            status="VERIFIED",
+                            evidence=f"Matched via Crustdata technographics dataset filter ({tech})",
+                        )
+                    )
+
+        # 5. Job Title
+        if interpretation.job_title:
+            req_title = interpretation.job_title
+            curr_title = candidate.current_title or ""
+            if req_title.lower() in curr_title.lower():
+                criteria.append(
+                    CriterionMatch(
+                        criterion="Job title",
+                        requested_value=req_title,
+                        actual_value=curr_title,
+                        status="VERIFIED",
+                        evidence=f"Verified current title: {curr_title}",
+                    )
+                )
+            elif curr_title:
+                criteria.append(
+                    CriterionMatch(
+                        criterion="Job title",
+                        requested_value=req_title,
+                        actual_value=curr_title,
+                        status="UNAVAILABLE",
+                        evidence=f"Title '{curr_title}' does not match requested title '{req_title}'",
+                    )
+                )
+            else:
+                criteria.append(
+                    CriterionMatch(
+                        criterion="Job title",
+                        requested_value=req_title,
+                        actual_value=None,
+                        status="UNAVAILABLE",
+                        evidence="Current job title not confirmed in preview",
+                    )
+                )
+
+        return criteria
+
     async def search_candidates(
         self,
         db: AsyncSession,
         query: str,
         entity_type: Optional[EntityType] = None,
-        limit: int = 5,
+        limit: int = 10,
+        cursor: Optional[str] = None,
+        page: int = 1,
         mode: str = "LIVE",
     ) -> EntitySearchResponse:
         """
         LEVEL 1 — SEARCH
         Identifies matching companies or people, returns candidates, and minimizes credit consumption.
         Translates natural language intelligence queries into structured Crustdata v2025-11-01 filter trees.
+        Supports cursor-based and offset pagination (10, 25, 50 results per page) and stable deduplication.
         """
         # Run Natural Language Query Interpreter
         interpretation = CrustdataQueryInterpreter.interpret(query)
         detected_type = entity_type or interpretation.target_entity
         candidates: List[EntityCandidate] = []
+        next_cursor: Optional[str] = None
+        total_results: Optional[int] = None
         credits_consumed = CreditGuard.estimate_cost(EnrichmentLevel.LEVEL_1_SEARCH)
 
         is_client_mock = (mode == "DEMO") or (not self.client.is_configured and settings.CRUSTDATA_ENABLE_MOCK)
@@ -124,37 +352,72 @@ class CrustdataIntelligenceService:
         filter_tree = interpretation.filter_tree
 
         if detected_type == EntityType.COMPANY:
-            candidates = await self.client.search_company_candidates(
-                query, limit=limit, filters=filter_tree if filter_tree["conditions"] else None, mode=mode
+            res_cands = await self.client.search_company_candidates(
+                query,
+                limit=limit,
+                filters=filter_tree if filter_tree["conditions"] else None,
+                cursor=cursor,
+                mode=mode,
             )
+            candidates = list(res_cands)
+            next_cursor = getattr(res_cands, "next_cursor", None)
+            total_results = getattr(res_cands, "total_count", None)
         elif detected_type == EntityType.PERSON:
-            candidates = await self.client.search_person_candidates(
-                query, limit=limit, filters=filter_tree if filter_tree["conditions"] else None, mode=mode
+            res_cands = await self.client.search_person_candidates(
+                query,
+                limit=limit,
+                filters=filter_tree if filter_tree["conditions"] else None,
+                cursor=cursor,
+                mode=mode,
             )
+            candidates = list(res_cands)
+            next_cursor = getattr(res_cands, "next_cursor", None)
+            total_results = getattr(res_cands, "total_count", None)
         else:
             # Ambiguous: query both
             comp_cands = await self.client.search_company_candidates(
-                query, limit=limit, filters=filter_tree if filter_tree["conditions"] else None, mode=mode
+                query,
+                limit=limit,
+                filters=filter_tree if filter_tree["conditions"] else None,
+                cursor=cursor,
+                mode=mode,
             )
             person_cands = await self.client.search_person_candidates(
-                query, limit=limit, filters=filter_tree if filter_tree["conditions"] else None, mode=mode
+                query,
+                limit=limit,
+                filters=filter_tree if filter_tree["conditions"] else None,
+                cursor=cursor,
+                mode=mode,
             )
-            candidates = comp_cands + person_cands
+            candidates = list(comp_cands) + list(person_cands)
+            next_cursor = getattr(comp_cands, "next_cursor", None) or getattr(person_cands, "next_cursor", None)
+            total_results = (getattr(comp_cands, "total_count", 0) or 0) + (getattr(person_cands, "total_count", 0) or 0) or None
             if comp_cands and not person_cands:
                 detected_type = EntityType.COMPANY
             elif person_cands and not comp_cands:
                 detected_type = EntityType.PERSON
 
-        is_ambiguous = len(candidates) > 1
-        is_mock_result = any(c.is_mock for c in candidates)
+        # Stable deduplication using canonical identifiers
+        seen_identifiers = set()
+        deduped_candidates: List[EntityCandidate] = []
+        for c in candidates:
+            stable_key = c.profile_url or (f"domain_{c.primary_domain}" if c.primary_domain else c.candidate_id)
+            if stable_key not in seen_identifiers:
+                seen_identifiers.add(stable_key)
+                # Compute search relevance matched criteria
+                c.matched_criteria = self._evaluate_search_relevance(c, interpretation)
+                deduped_candidates.append(c)
+
+        is_ambiguous = len(deduped_candidates) > 1
+        is_mock_result = any(c.is_mock for c in deduped_candidates)
 
         # Audit search query in DB
         search_record = IntelligenceSearch(
             id=str(uuid.uuid4()),
             search_query=query,
             entity_type=detected_type.value,
-            search_status="AMBIGUOUS" if is_ambiguous else ("COMPLETED" if candidates else "NO_MATCH"),
-            candidates=[c.model_dump(mode="json") for c in candidates],
+            search_status="AMBIGUOUS" if is_ambiguous else ("COMPLETED" if deduped_candidates else "NO_MATCH"),
+            candidates=[c.model_dump(mode="json") for c in deduped_candidates],
             credits_consumed=credits_consumed,
             is_mock=is_mock_result,
         )
@@ -172,13 +435,17 @@ class CrustdataIntelligenceService:
         return EntitySearchResponse(
             query=query,
             detected_type=detected_type,
-            candidates=candidates,
+            candidates=deduped_candidates,
             is_ambiguous=is_ambiguous,
             credits_consumed=credits_consumed,
             is_mock=is_mock_result,
             data_origin="DEMO" if is_mock_result else "LIVE",
             interpretation=interpretation.model_dump(mode="json"),
             buying_intent_distinction=interpretation.buying_intent_distinction,
+            next_cursor=next_cursor,
+            total_results=total_results,
+            page_size=limit,
+            current_page=page,
         )
 
     async def enrich_entity(

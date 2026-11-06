@@ -52,11 +52,21 @@ class PipelineRunner:
         except asyncio.TimeoutError:
             err_msg = f"Workflow timed out after {timeout_seconds} seconds."
             logger.error(f"Workflow {workflow.id} timeout: {err_msg}")
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             cls._record_failure(workflow, "TIMEOUT", err_msg)
+            await db.commit()
         except Exception as e:
             err_msg = f"Workflow step error: {str(e)}"
             logger.error(f"Workflow {workflow.id} failed: {err_msg}", exc_info=True)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             cls._record_failure(workflow, workflow.current_step, err_msg)
+            await db.commit()
 
         duration_ms = int((time.time() - start_time) * 1000)
         workflow.execution_duration_ms += duration_ms
@@ -109,10 +119,24 @@ class PipelineRunner:
             include_synth = workflow.input_payload.get("include_synthetic", True)
             summary = await listener.run_ingestion_cycle(db, include_synthetic=include_synth, max_items_per_source=5)
 
-            # Pick the highest urgency newly ingested signal
-            sig_query = select(Signal).where(Signal.status == "NEW").order_by(desc(Signal.urgency_score)).limit(1)
-            sig_res = await db.execute(sig_query)
-            signal = sig_res.scalar_one_or_none()
+            # Pick an actionable newly ingested signal
+            target_sig_id = workflow.input_payload.get("signal_id")
+            if target_sig_id:
+                sig_res = await db.execute(select(Signal).where(Signal.id == target_sig_id))
+                signal = sig_res.scalar_one_or_none()
+
+            if not signal:
+                # Prioritize signals with identifiable corporate entities over anonymous complaints
+                all_new_sig_query = select(Signal).where(Signal.status == "NEW").order_by(desc(Signal.urgency_score))
+                all_new_sig_res = await db.execute(all_new_sig_query)
+                all_new_signals = all_new_sig_res.scalars().all()
+                for cand_sig in all_new_signals:
+                    ee = cand_sig.extracted_evidence or {}
+                    if ee.get("company_name") or ee.get("domain") or (cand_sig.original_url and "reddit.com" not in cand_sig.original_url and "ycombinator.com" not in cand_sig.original_url):
+                        signal = cand_sig
+                        break
+                if not signal and all_new_signals:
+                    signal = all_new_signals[0]
 
             if signal:
                 workflow.signal_id = signal.id
@@ -202,6 +226,25 @@ class PipelineRunner:
                 infra_indicators=infra_indicators,
             )
 
+            # Resolve Decision Makers via Crustdata Intelligence (with mock fallback for demo/synthetic)
+            resolved_decision_makers = list(candidate.decision_makers) if candidate.decision_makers else []
+            if candidate.domain:
+                try:
+                    from app.services.crustdata.mock_provider import CrustdataMockProvider
+                    c_prof = CrustdataMockProvider.enrich_company(candidate.domain)
+                    if c_prof and c_prof.leadership:
+                        resolved_decision_makers = [
+                            {
+                                "name": l.get("name"),
+                                "title": l.get("title"),
+                                "role": l.get("title"),
+                                "department": "Engineering",
+                            }
+                            for l in c_prof.leadership
+                        ]
+                except Exception:
+                    pass
+
             company = Company(
                 signal_id=signal.id,
                 name=candidate.company_name,
@@ -215,7 +258,7 @@ class PipelineRunner:
                 identity_confidence=score_report.identity_confidence,
                 technology_confidence=score_report.technology_confidence,
                 qualification_status=score_report.qualification_status,
-                decision_makers=candidate.decision_makers,
+                decision_makers=resolved_decision_makers,
                 evidence_sources=[signal.original_url] if signal.original_url else [],
                 evidence_records=evidence_records,
                 is_synthetic=signal.is_synthetic,

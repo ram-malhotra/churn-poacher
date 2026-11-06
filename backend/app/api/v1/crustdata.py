@@ -181,6 +181,8 @@ async def search_entities(
             query=request.query,
             entity_type=request.entity_type,
             limit=request.limit,
+            cursor=request.cursor,
+            page=request.page or 1,
             mode=request.mode,
         )
     except CrustdataBudgetExhaustedError as e:

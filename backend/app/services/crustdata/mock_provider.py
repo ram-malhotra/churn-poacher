@@ -14,6 +14,7 @@ from app.services.crustdata.schemas import (
     EnrichmentLevel,
     VerificationClassification,
     EntityCandidate,
+    PaginatedCandidateList,
     CrustdataCreditsInfo,
     CompanyIntelligenceProfile,
     PersonIntelligenceProfile,
@@ -223,15 +224,21 @@ class CrustdataMockProvider:
         return cls.MOCK_CREDITS
 
     @classmethod
-    def search_candidates(cls, query: str, entity_type: Optional[EntityType] = None, limit: int = 5) -> List[EntityCandidate]:
+    def search_candidates(
+        cls,
+        query: str,
+        entity_type: Optional[EntityType] = None,
+        limit: int = 10,
+        cursor: Optional[str] = None,
+    ) -> PaginatedCandidateList:
         q_clean = query.lower().strip()
-        candidates: List[EntityCandidate] = []
+        all_candidates: List[EntityCandidate] = []
 
         # Check companies
         if entity_type in (EntityType.COMPANY, None):
             for key, c in cls.MOCK_COMPANIES.items():
                 if key in q_clean or q_clean in c["name"].lower() or c["primary_domain"] in q_clean:
-                    candidates.append(
+                    all_candidates.append(
                         EntityCandidate(
                             candidate_id=f"comp_{key}",
                             entity_type=EntityType.COMPANY,
@@ -245,7 +252,19 @@ class CrustdataMockProvider:
                             source="DEMO Mock Provider",
                             verification_status="VERIFIED",
                             buying_intent_status="INTELLIGENCE_ONLY",
-                            provenance={"name": "MOCK_FIXTURE", "primary_domain": "MOCK_FIXTURE"},
+                            provenance={
+                                "name": "DEMO_FIXTURE",
+                                "primary_domain": "DEMO_FIXTURE",
+                                "location": "DEMO_FIXTURE",
+                            },
+                            field_verification={
+                                "name": "VERIFIED",
+                                "primary_domain": "VERIFIED",
+                                "location": "VERIFIED",
+                                "employee_count": "VERIFIED",
+                                "industry": "VERIFIED",
+                            },
+                            raw_data=c,
                         )
                     )
 
@@ -261,7 +280,7 @@ class CrustdataMockProvider:
                     or q_clean in p_name
                     or (p_url and (q_clean in p_url or person_slug in p_url or person_slug == key.replace(" ", "")))
                 ):
-                    candidates.append(
+                    all_candidates.append(
                         EntityCandidate(
                             candidate_id=f"person_{key.replace(' ', '_')}",
                             entity_type=EntityType.PERSON,
@@ -277,11 +296,36 @@ class CrustdataMockProvider:
                             source="DEMO Mock Provider",
                             verification_status="VERIFIED",
                             buying_intent_status="INTELLIGENCE_ONLY",
-                            provenance={"name": "MOCK_FIXTURE", "current_title": "MOCK_FIXTURE", "current_company": "MOCK_FIXTURE"},
+                            provenance={
+                                "name": "DEMO_FIXTURE",
+                                "current_title": "DEMO_FIXTURE",
+                                "current_company": "DEMO_FIXTURE",
+                            },
+                            field_verification={
+                                "name": "VERIFIED",
+                                "current_title": "VERIFIED",
+                                "company_name": "VERIFIED",
+                                "profile_url": "VERIFIED",
+                                "location": "VERIFIED",
+                            },
+                            raw_data=p,
                         )
                     )
 
-        return candidates[:limit]
+        # Handle mock offset pagination
+        offset = 0
+        if cursor and cursor.startswith("mock_offset_"):
+            try:
+                offset = int(cursor.split("_")[-1])
+            except ValueError:
+                offset = 0
+
+        paged = all_candidates[offset : offset + limit]
+        next_cursor = None
+        if offset + limit < len(all_candidates):
+            next_cursor = f"mock_offset_{offset + limit}"
+
+        return PaginatedCandidateList(paged, next_cursor=next_cursor, total_count=len(all_candidates))
 
     @classmethod
     def enrich_company(

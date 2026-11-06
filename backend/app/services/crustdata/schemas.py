@@ -37,6 +37,26 @@ class CrustdataCreditsInfo(BaseModel):
     checked_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class CriterionMatch(BaseModel):
+    """Specific search criterion matching evaluation."""
+    criterion: str  # "Industry", "Country", "Employee count", "Technology stack", "Job title"
+    requested_value: str
+    actual_value: Optional[str] = None
+    status: str = "UNAVAILABLE"  # "VERIFIED", "INFERRED", "UNAVAILABLE"
+    evidence: Optional[str] = None
+
+
+class PaginatedCandidateList(list):
+    """
+    List of EntityCandidate items with cursor and total count metadata.
+    Subclasses list for 100% backward compatibility with List[EntityCandidate].
+    """
+    def __init__(self, items=(), next_cursor: Optional[str] = None, total_count: Optional[int] = None):
+        super().__init__(items)
+        self.next_cursor = next_cursor
+        self.total_count = total_count
+
+
 class EntityCandidate(BaseModel):
     """Candidate entity returned from Level 1 Search."""
     candidate_id: str
@@ -59,13 +79,18 @@ class EntityCandidate(BaseModel):
     buying_intent_status: str = "INTELLIGENCE_ONLY"  # "INTELLIGENCE_ONLY", "LINKED_TO_DISTRESS_SIGNAL"
     buying_intent_note: Optional[str] = None
     provenance: Dict[str, str] = Field(default_factory=dict)
+    field_verification: Dict[str, str] = Field(default_factory=dict)
+    matched_criteria: List[CriterionMatch] = Field(default_factory=list)
+    raw_data: Optional[Dict[str, Any]] = None
 
 
 class EntitySearchRequest(BaseModel):
     """Search request payload."""
     query: str
     entity_type: Optional[EntityType] = None  # If None, auto-detected
-    limit: int = Field(default=5, ge=1, le=20)
+    limit: int = Field(default=10, ge=1, le=100)
+    cursor: Optional[str] = None
+    page: Optional[int] = 1
     mode: str = "LIVE"  # "LIVE" or "DEMO"
 
 
@@ -80,6 +105,10 @@ class EntitySearchResponse(BaseModel):
     data_origin: str = "LIVE"
     interpretation: Optional[Dict[str, Any]] = None
     buying_intent_distinction: Optional[str] = None
+    next_cursor: Optional[str] = None
+    total_results: Optional[int] = None
+    page_size: int = 10
+    current_page: int = 1
 
 
 class IntelligenceEvidenceItem(BaseModel):

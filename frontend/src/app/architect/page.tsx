@@ -22,11 +22,15 @@ export default function MigrationArchitectPage() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
 
   const { data: companies } = useQuery({
-    queryKey: ["acceptedCompanies"],
-    queryFn: () => api.getCompanies({ qualification_status: "ACCEPTED", limit: 20 }),
+    queryKey: ["allCompaniesForArchitect"],
+    queryFn: () => api.getCompanies({ limit: 50 }),
   });
 
-  const activeCompanyId = selectedCompanyId || (companies && companies.length > 0 ? companies[0].id : "");
+  const eligibleCompanies = React.useMemo(() => {
+    return (companies || []).filter((c) => c.qualification_status !== "REJECTED");
+  }, [companies]);
+
+  const activeCompanyId = selectedCompanyId || (eligibleCompanies && eligibleCompanies.length > 0 ? eligibleCompanies[0].id : "");
 
   const { data: blueprint, isLoading, error: blueprintError } = useQuery({
     queryKey: ["architectureBlueprint", activeCompanyId],
@@ -59,7 +63,7 @@ export default function MigrationArchitectPage() {
 
       <div className="p-6 space-y-6 max-w-7xl mx-auto w-full">
         {/* Company Selector */}
-        {companies && companies.length > 0 ? (
+        {eligibleCompanies && eligibleCompanies.length > 0 ? (
           <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-100 border border-border">
             <span className="text-xs text-gray-400 font-medium">Select Target Organization:</span>
             <select
@@ -67,9 +71,9 @@ export default function MigrationArchitectPage() {
               onChange={(e) => setSelectedCompanyId(e.target.value)}
               className="bg-surface-50 border border-border text-xs text-white rounded px-3 py-1.5 focus:outline-none"
             >
-              {companies.map((c) => (
+              {eligibleCompanies.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name} ({c.estimated_size})
+                  {c.name} ({c.qualification_status} · {c.estimated_size})
                 </option>
               ))}
             </select>

@@ -260,6 +260,8 @@ export const api = {
     query: string;
     entity_type?: CrustdataEntityType;
     limit?: number;
+    cursor?: string | null;
+    page?: number;
     mode?: "LIVE" | "DEMO";
   }): Promise<EntitySearchResponse> {
     return request<EntitySearchResponse>("/crustdata/search", {

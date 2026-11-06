@@ -29,6 +29,11 @@ import {
   X,
   Sparkles,
   Info,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  Eye,
+  FileJson,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import {
@@ -74,6 +79,11 @@ export default function CrustdataExplorerPage() {
   const [isIncreasingBudget, setIsIncreasingBudget] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [creditError, setCreditError] = useState<InlineCreditError | null>(null);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [pageNumber, setPageNumber] = useState<number>(1);
+  const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [inspectorCandidate, setInspectorCandidate] = useState<EntityCandidate | null>(null);
 
   useEffect(() => {
     loadBudgetAndCredits();
@@ -155,7 +165,13 @@ export default function CrustdataExplorerPage() {
     });
   };
 
-  const handleSearch = async (e?: React.FormEvent, overrideQuery?: string) => {
+  const handleSearch = async (
+    e?: React.FormEvent,
+    overrideQuery?: string,
+    targetCursor?: string | null,
+    targetPage?: number,
+    append = false
+  ) => {
     if (e) e.preventDefault();
     const queryToSearch = overrideQuery || query;
     if (!queryToSearch.trim()) return;
@@ -165,11 +181,19 @@ export default function CrustdataExplorerPage() {
       return;
     }
 
-    setIsSearching(true);
-    setSearchResults(null);
-    setActiveProfile(null);
-    setSelectedCandidate(null);
-    setDeepCostEstimate(null);
+    if (append) {
+      setIsLoadingMore(true);
+    } else {
+      setIsSearching(true);
+      if (!targetCursor && (!targetPage || targetPage === 1)) {
+        setSearchResults(null);
+        setActiveProfile(null);
+        setSelectedCandidate(null);
+        setDeepCostEstimate(null);
+        setCursorStack([null]);
+        setPageNumber(1);
+      }
+    }
     setCreditError(null);
 
     try {
@@ -177,15 +201,38 @@ export default function CrustdataExplorerPage() {
       const res = await api.searchCrustdata({
         query: queryToSearch.trim(),
         entity_type: filter,
-        limit: 6,
+        limit: pageSize,
+        cursor: targetCursor || undefined,
+        page: targetPage || (append ? pageNumber + 1 : pageNumber),
         mode,
       });
-      setSearchResults(res);
+
+      if (append && searchResults) {
+        // Deduplicate using stable entity identifiers
+        const existingKeys = new Set(
+          searchResults.candidates.map(
+            (c) => c.profile_url || (c.primary_domain ? `domain_${c.primary_domain}` : c.candidate_id)
+          )
+        );
+        const uniqueIncoming = res.candidates.filter(
+          (c) => !existingKeys.has(c.profile_url || (c.primary_domain ? `domain_${c.primary_domain}` : c.candidate_id))
+        );
+        setSearchResults({
+          ...res,
+          candidates: [...searchResults.candidates, ...uniqueIncoming],
+          next_cursor: res.next_cursor,
+        });
+        setPageNumber((prev) => prev + 1);
+      } else {
+        setSearchResults(res);
+        if (targetPage) setPageNumber(targetPage);
+      }
+
       await loadBudgetAndCredits();
       await loadSearchHistory();
 
       // If single unambiguous candidate returned, auto-enrich standard profile
-      if (res.candidates.length === 1 && !res.is_ambiguous) {
+      if (res.candidates.length === 1 && !res.is_ambiguous && !append && (!targetPage || targetPage === 1)) {
         const singleCand = res.candidates[0];
         handleEnrichCandidate(singleCand, "LEVEL_2_STANDARD");
       }
@@ -193,6 +240,42 @@ export default function CrustdataExplorerPage() {
       parseAndHandleError(err);
     } finally {
       setIsSearching(false);
+      setIsLoadingMore(false);
+    }
+  };
+
+  const handleNextPage = () => {
+    if (!searchResults?.next_cursor || isSearching) return;
+    const nextCursor = searchResults.next_cursor;
+    const nextPage = pageNumber + 1;
+    setCursorStack((prev) => [...prev, nextCursor]);
+    handleSearch(undefined, undefined, nextCursor, nextPage, false);
+  };
+
+  const handlePrevPage = () => {
+    if (pageNumber <= 1 || cursorStack.length <= 1 || isSearching) return;
+    const newStack = [...cursorStack];
+    newStack.pop(); // Remove current page cursor
+    const prevCursor = newStack[newStack.length - 1];
+    setCursorStack(newStack);
+    const prevPage = pageNumber - 1;
+    handleSearch(undefined, undefined, prevCursor, prevPage, false);
+  };
+
+  const handleLoadMore = () => {
+    if (!searchResults?.next_cursor || isLoadingMore || isSearching) return;
+    handleSearch(undefined, undefined, searchResults.next_cursor, pageNumber + 1, true);
+  };
+
+  const handlePageSizeChange = (newSize: number) => {
+    setPageSize(newSize);
+    if (searchResults && query.trim()) {
+      setCursorStack([null]);
+      setPageNumber(1);
+      // Re-run search with new page size
+      setTimeout(() => {
+        handleSearch(undefined, undefined, null, 1, false);
+      }, 50);
     }
   };
 
@@ -685,17 +768,59 @@ export default function CrustdataExplorerPage() {
       {/* Search Candidates (Level 1 Candidate Selection) */}
       {searchResults && searchResults.candidates.length > 0 && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              Candidate Matches ({searchResults.candidates.length})
-            </h2>
-            {searchResults.is_ambiguous && (
-              <span className="text-xs px-2 py-0.5 rounded bg-warning/20 text-warning border border-warning/30 flex items-center gap-1">
-                <AlertTriangle className="h-3 w-3" />
-                Multiple candidates detected — select to enrich
-              </span>
-            )}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Candidate Matches ({searchResults.candidates.length}
+                {searchResults.total_results ? ` of ${searchResults.total_results.toLocaleString()}` : ""})
+              </h2>
+              {searchResults.is_ambiguous && (
+                <span className="text-xs px-2 py-0.5 rounded bg-warning/20 text-warning border border-warning/30 flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" />
+                  Multiple candidates
+                </span>
+              )}
+            </div>
+
+            {/* Pagination Controls & Per-Page Selector */}
+            <div className="flex items-center gap-2 text-xs">
+              <div className="flex items-center gap-1 bg-surface-200 px-2 py-1 rounded-md border border-border">
+                <span className="text-muted-foreground text-[11px]">Per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                  className="bg-transparent text-foreground font-semibold focus:outline-none cursor-pointer"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                </select>
+              </div>
+
+              {/* Prev / Next buttons */}
+              <div className="flex items-center gap-1 bg-surface-200 px-1 py-0.5 rounded-md border border-border">
+                <button
+                  onClick={handlePrevPage}
+                  disabled={pageNumber <= 1 || isSearching}
+                  className="p-1 hover:bg-surface-300 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="Previous Page"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <span className="px-1.5 font-mono text-[11px] text-muted-foreground">
+                  Page {pageNumber}
+                </span>
+                <button
+                  onClick={handleNextPage}
+                  disabled={!searchResults.next_cursor || isSearching}
+                  className="p-1 hover:bg-surface-300 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="Next Page"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -745,7 +870,43 @@ export default function CrustdataExplorerPage() {
                   {cand.primary_domain && (
                     <p className="text-xs text-muted-foreground font-mono">{cand.primary_domain}</p>
                   )}
+                  {cand.location && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Globe className="h-3 w-3 shrink-0" />
+                      {cand.location}
+                    </p>
+                  )}
                   {cand.headline && <p className="text-xs text-muted-foreground line-clamp-2">{cand.headline}</p>}
+                  
+                  {/* Search Criteria Relevance Badges */}
+                  {cand.matched_criteria && cand.matched_criteria.length > 0 && (
+                    <div className="space-y-1 pt-1.5 border-t border-border/50">
+                      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                        Criteria Relevance:
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {cand.matched_criteria.map((mc, idx) => (
+                          <span
+                            key={idx}
+                            title={mc.evidence || undefined}
+                            className={`text-[10px] px-2 py-0.5 rounded font-medium flex items-center gap-1 ${
+                              mc.status === "VERIFIED"
+                                ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                                : mc.status === "INFERRED"
+                                ? "bg-sky-500/15 text-sky-400 border border-sky-500/30"
+                                : "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                            }`}
+                          >
+                            <span>{mc.status === "VERIFIED" ? "✓" : mc.status === "INFERRED" ? "~" : "⚠️"}</span>
+                            <span className="font-semibold">{mc.criterion}:</span>
+                            <span>{mc.actual_value || mc.requested_value}</span>
+                            <span className="text-[9px] opacity-75">({mc.status})</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="text-[10px] text-muted-foreground font-mono pt-1">
                     Intent: <span className="text-foreground">Intelligence Only (No Signal)</span>
                   </div>
@@ -769,9 +930,64 @@ export default function CrustdataExplorerPage() {
                   >
                     <Zap className="h-3.5 w-3.5" />
                   </button>
+                  <button
+                    onClick={() => setInspectorCandidate(cand)}
+                    className="btn btn-outline text-xs py-1.5 px-2 text-muted-foreground hover:text-foreground hover:bg-surface-200"
+                    title="Inspect Crustdata Raw Payload & Field Provenance"
+                  >
+                    <FileJson className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               </div>
             ))}
+          </div>
+
+          {/* Load More & Pagination Bar */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 bg-surface-100 p-3 rounded-lg border border-border">
+            <div className="text-xs text-muted-foreground">
+              Showing <span className="text-foreground font-semibold">{searchResults.candidates.length}</span>
+              {searchResults.total_results ? (
+                <> of <span className="text-foreground font-semibold">{searchResults.total_results.toLocaleString()}</span></>
+              ) : ""}{" "}
+              results
+            </div>
+
+            <div className="flex items-center gap-2">
+              {searchResults.next_cursor && (
+                <button
+                  onClick={handleLoadMore}
+                  disabled={isLoadingMore || isSearching}
+                  className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+                >
+                  {isLoadingMore ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  )}
+                  Load More Results
+                </button>
+              )}
+
+              <div className="flex items-center gap-1 bg-surface-200 px-2 py-1 rounded-md border border-border">
+                <button
+                  onClick={handlePrevPage}
+                  disabled={pageNumber <= 1 || isSearching}
+                  className="px-2 py-1 hover:bg-surface-300 rounded disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 text-xs"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" /> Previous
+                </button>
+                <span className="px-2 font-mono text-xs text-muted-foreground">
+                  Page {pageNumber}
+                </span>
+                <button
+                  onClick={handleNextPage}
+                  disabled={!searchResults.next_cursor || isSearching}
+                  className="px-2 py-1 hover:bg-surface-300 rounded disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-1 text-xs"
+                >
+                  Next <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1315,7 +1531,176 @@ export default function CrustdataExplorerPage() {
         </div>
       )}
 
-      {/* Search History Drawer/Section */}
+      {/* Field Provenance & Raw Crustdata Payload Inspector Modal */}
+      {inspectorCandidate && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-surface-100 border border-border rounded-xl max-w-2xl w-full p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-border">
+              <div className="flex items-center gap-2">
+                <FileJson className="h-5 w-5 text-primary" />
+                <h3 className="font-bold text-foreground text-base">
+                  Crustdata Provenance & Raw Payload
+                </h3>
+              </div>
+              <button
+                onClick={() => setInspectorCandidate(null)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <h4 className="font-semibold text-lg text-foreground">{inspectorCandidate.name}</h4>
+                <span className="text-xs px-2 py-0.5 rounded bg-surface-200 font-mono text-muted-foreground">
+                  {inspectorCandidate.entity_type}
+                </span>
+                <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-mono border border-emerald-500/20">
+                  {inspectorCandidate.data_origin}
+                </span>
+              </div>
+              <p className="text-xs font-mono text-muted-foreground">
+                Candidate ID: {inspectorCandidate.candidate_id} | Source: {inspectorCandidate.source}
+              </p>
+            </div>
+
+            {/* Field Verification & Provenance Table */}
+            <div className="space-y-2">
+              <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Field-Level Provenance & Verification
+              </h5>
+              <div className="border border-border rounded-lg overflow-hidden">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-surface-200 text-muted-foreground border-b border-border font-medium">
+                    <tr>
+                      <th className="p-2">Field</th>
+                      <th className="p-2">Extracted Value</th>
+                      <th className="p-2">Status</th>
+                      <th className="p-2">Provenance Source</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border font-mono">
+                    <tr>
+                      <td className="p-2 font-medium text-foreground">Name</td>
+                      <td className="p-2 text-foreground">{inspectorCandidate.name}</td>
+                      <td className="p-2">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">
+                          {inspectorCandidate.field_verification?.name || "VERIFIED"}
+                        </span>
+                      </td>
+                      <td className="p-2 text-muted-foreground">{inspectorCandidate.provenance?.name || "LIVE_CRUSTDATA"}</td>
+                    </tr>
+                    {inspectorCandidate.primary_domain && (
+                      <tr>
+                        <td className="p-2 font-medium text-foreground">Domain</td>
+                        <td className="p-2 text-foreground">{inspectorCandidate.primary_domain}</td>
+                        <td className="p-2">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">
+                            {inspectorCandidate.field_verification?.primary_domain || "VERIFIED"}
+                          </span>
+                        </td>
+                        <td className="p-2 text-muted-foreground">{inspectorCandidate.provenance?.primary_domain || "LIVE_CRUSTDATA"}</td>
+                      </tr>
+                    )}
+                    {inspectorCandidate.location && (
+                      <tr>
+                        <td className="p-2 font-medium text-foreground">Location</td>
+                        <td className="p-2 text-foreground">{inspectorCandidate.location}</td>
+                        <td className="p-2">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">
+                            {inspectorCandidate.field_verification?.location || "VERIFIED"}
+                          </span>
+                        </td>
+                        <td className="p-2 text-muted-foreground">{inspectorCandidate.provenance?.location || "LIVE_CRUSTDATA"}</td>
+                      </tr>
+                    )}
+                    {inspectorCandidate.current_title && (
+                      <tr>
+                        <td className="p-2 font-medium text-foreground">Title</td>
+                        <td className="p-2 text-foreground">{inspectorCandidate.current_title}</td>
+                        <td className="p-2">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">
+                            {inspectorCandidate.field_verification?.current_title || "VERIFIED"}
+                          </span>
+                        </td>
+                        <td className="p-2 text-muted-foreground">{inspectorCandidate.provenance?.title || "LIVE_CRUSTDATA"}</td>
+                      </tr>
+                    )}
+                    {inspectorCandidate.profile_url && (
+                      <tr>
+                        <td className="p-2 font-medium text-foreground">Profile URL</td>
+                        <td className="p-2 text-foreground truncate max-w-xs">{inspectorCandidate.profile_url}</td>
+                        <td className="p-2">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400">
+                            {inspectorCandidate.field_verification?.profile_url || "VERIFIED"}
+                          </span>
+                        </td>
+                        <td className="p-2 text-muted-foreground">{inspectorCandidate.provenance?.profile_url || "LIVE_CRUSTDATA"}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Matched Search Criteria Evidence */}
+            {inspectorCandidate.matched_criteria && inspectorCandidate.matched_criteria.length > 0 && (
+              <div className="space-y-2">
+                <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Criteria Match Evidence
+                </h5>
+                <div className="space-y-1.5">
+                  {inspectorCandidate.matched_criteria.map((mc, idx) => (
+                    <div
+                      key={idx}
+                      className="p-2.5 rounded-lg border border-border bg-surface-200/50 flex flex-col gap-1 text-xs"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-foreground flex items-center gap-1.5">
+                          <span>{mc.status === "VERIFIED" ? "✓" : mc.status === "INFERRED" ? "~" : "⚠️"}</span>
+                          {mc.criterion}: {mc.requested_value}
+                        </span>
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold ${
+                            mc.status === "VERIFIED"
+                              ? "bg-emerald-500/20 text-emerald-400"
+                              : mc.status === "INFERRED"
+                              ? "bg-sky-500/20 text-sky-400"
+                              : "bg-amber-500/20 text-amber-400"
+                          }`}
+                        >
+                          {mc.status}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">{mc.evidence}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Raw Crustdata Response Payload */}
+            <div className="space-y-2">
+              <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Original Upstream Response Payload
+              </h5>
+              <pre className="bg-surface-200 border border-border p-3 rounded-lg font-mono text-[11px] overflow-auto max-h-64 text-foreground/90 leading-relaxed">
+                {JSON.stringify(inspectorCandidate.raw_data || { notice: "No raw payload stored" }, null, 2)}
+              </pre>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setInspectorCandidate(null)}
+                className="btn btn-secondary text-xs py-1.5 px-4"
+              >
+                Close Inspector
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {searchHistory.length > 0 && (
         <div className="bg-surface-100 border border-border p-4 rounded-xl space-y-3">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">

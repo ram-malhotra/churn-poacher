@@ -20,6 +20,7 @@ from app.services.crustdata.schemas import (
     EntityType,
     EnrichmentLevel,
     EntityCandidate,
+    PaginatedCandidateList,
     CrustdataCreditsInfo,
     CompanyIntelligenceProfile,
     PersonIntelligenceProfile,
@@ -159,15 +160,16 @@ class CrustdataClient:
     async def search_company_candidates(
         self,
         query: str,
-        limit: int = 5,
+        limit: int = 10,
         filters: Optional[Dict[str, Any]] = None,
+        cursor: Optional[str] = None,
         mode: str = "LIVE",
-    ) -> List[EntityCandidate]:
+    ) -> PaginatedCandidateList:
         """
         Executes Level 1 Company Search via POST /company/search (0.03 credits).
         """
         if mode == "DEMO" or (settings.CRUSTDATA_ENABLE_MOCK and not self.is_configured):
-            return CrustdataMockProvider.search_candidates(query, entity_type=EntityType.COMPANY, limit=limit)
+            return CrustdataMockProvider.search_candidates(query, entity_type=EntityType.COMPANY, limit=limit, cursor=cursor)
 
         cost = CreditGuard.estimate_cost(EnrichmentLevel.LEVEL_1_SEARCH)
         CreditGuard.verify_budget_can_proceed(cost)
@@ -185,10 +187,12 @@ class CrustdataClient:
         else:
             search_filters = filters
 
-        payload = {
+        payload: Dict[str, Any] = {
             "filters": search_filters,
             "limit": limit,
         }
+        if cursor:
+            payload["cursor"] = cursor
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -196,6 +200,9 @@ class CrustdataClient:
                 if res.status_code == 200:
                     data = res.json()
                     results = data.get("companies", []) or data.get("results", [])
+                    next_cursor = data.get("next_cursor")
+                    total_count = data.get("total_count")
+
                     candidates: List[EntityCandidate] = []
                     for item in results:
                         basic = item.get("basic_info") or {}
@@ -214,6 +221,10 @@ class CrustdataClient:
                         elif query.strip().lower() in name.lower():
                             conf += 0.10
 
+                        headquarters = locations.get("headquarters") or locations.get("country")
+                        employee_range = basic.get("employee_count_range")
+                        industry_val = basic.get("industry") or (item.get("taxonomy") and item.get("taxonomy", {}).get("professional_network_industry"))
+
                         candidates.append(
                             EntityCandidate(
                                 candidate_id=c_id_str,
@@ -222,7 +233,7 @@ class CrustdataClient:
                                 primary_domain=domain,
                                 profile_url=basic.get("professional_network_url"),
                                 headline=basic.get("description", "")[:120] if basic.get("description") else None,
-                                location=locations.get("headquarters") or locations.get("country"),
+                                location=headquarters,
                                 logo_url=basic.get("logo_permalink"),
                                 confidence_score=min(1.0, conf),
                                 is_mock=False,
@@ -233,12 +244,22 @@ class CrustdataClient:
                                 buying_intent_note="Firmographics & company dataset match from Crustdata. No buying intent assumed.",
                                 provenance={
                                     "name": "LIVE_CRUSTDATA",
-                                    "primary_domain": "LIVE_CRUSTDATA",
-                                    "location": "LIVE_CRUSTDATA",
+                                    "primary_domain": "LIVE_CRUSTDATA" if domain else "UNKNOWN",
+                                    "location": "LIVE_CRUSTDATA" if headquarters else "UNKNOWN",
+                                    "employee_count": "LIVE_CRUSTDATA" if employee_range else "UNKNOWN",
+                                    "industry": "LIVE_CRUSTDATA" if industry_val else "UNKNOWN",
                                 },
+                                field_verification={
+                                    "name": "VERIFIED" if basic.get("name") else "INFERRED",
+                                    "primary_domain": "VERIFIED" if domain else "UNKNOWN",
+                                    "location": "VERIFIED" if headquarters else "UNKNOWN",
+                                    "employee_count": "VERIFIED" if employee_range else "UNKNOWN",
+                                    "industry": "VERIFIED" if industry_val else "UNKNOWN",
+                                },
+                                raw_data=item,
                             )
                         )
-                    return candidates
+                    return PaginatedCandidateList(candidates, next_cursor=next_cursor, total_count=total_count)
                 elif res.status_code in (401, 403):
                     raise CrustdataAuthError(f"Crustdata search unauthorized: {res.text}")
                 elif res.status_code == 429:
@@ -248,21 +269,22 @@ class CrustdataClient:
         except Exception as e:
             logger.error(f"Crustdata live company search error: {e}")
             if mode == "DEMO":
-                return CrustdataMockProvider.search_candidates(query, entity_type=EntityType.COMPANY, limit=limit)
+                return CrustdataMockProvider.search_candidates(query, entity_type=EntityType.COMPANY, limit=limit, cursor=cursor)
             raise
 
     async def search_person_candidates(
         self,
         query: str,
-        limit: int = 5,
+        limit: int = 10,
         filters: Optional[Dict[str, Any]] = None,
+        cursor: Optional[str] = None,
         mode: str = "LIVE",
-    ) -> List[EntityCandidate]:
+    ) -> PaginatedCandidateList:
         """
         Executes Level 1 People Search via POST /person/search (0.03 credits).
         """
         if mode == "DEMO" or (settings.CRUSTDATA_ENABLE_MOCK and not self.is_configured):
-            return CrustdataMockProvider.search_candidates(query, entity_type=EntityType.PERSON, limit=limit)
+            return CrustdataMockProvider.search_candidates(query, entity_type=EntityType.PERSON, limit=limit, cursor=cursor)
 
         cost = CreditGuard.estimate_cost(EnrichmentLevel.LEVEL_1_SEARCH)
         CreditGuard.verify_budget_can_proceed(cost)
@@ -283,10 +305,12 @@ class CrustdataClient:
         else:
             search_filters = filters
 
-        payload = {
+        payload: Dict[str, Any] = {
             "filters": search_filters,
             "limit": limit,
         }
+        if cursor:
+            payload["cursor"] = cursor
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -294,6 +318,9 @@ class CrustdataClient:
                 if res.status_code == 200:
                     data = res.json()
                     profiles = data.get("profiles", []) or data.get("results", []) or data.get("people", [])
+                    next_cursor = data.get("next_cursor")
+                    total_count = data.get("total_count")
+
                     candidates: List[EntityCandidate] = []
                     for item in profiles:
                         basic = item.get("basic_profile") or {}
@@ -349,10 +376,19 @@ class CrustdataClient:
                                     "title": "LIVE_CRUSTDATA" if current_title else "UNKNOWN",
                                     "company": "LIVE_CRUSTDATA" if company_name else "UNKNOWN",
                                     "profile_url": "LIVE_CRUSTDATA" if profile_url else "UNKNOWN",
+                                    "location": "LIVE_CRUSTDATA" if loc_str else "UNKNOWN",
                                 },
+                                field_verification={
+                                    "name": "VERIFIED" if basic.get("name") else "INFERRED",
+                                    "current_title": "VERIFIED" if current_title else "UNKNOWN",
+                                    "company_name": "VERIFIED" if company_name else "UNKNOWN",
+                                    "profile_url": "VERIFIED" if profile_url else "UNKNOWN",
+                                    "location": "VERIFIED" if loc_str else "UNKNOWN",
+                                },
+                                raw_data=item,
                             )
                         )
-                    return candidates
+                    return PaginatedCandidateList(candidates, next_cursor=next_cursor, total_count=total_count)
                 elif res.status_code in (401, 403):
                     raise CrustdataAuthError(f"Crustdata person search unauthorized: {res.text}")
                 elif res.status_code == 429:

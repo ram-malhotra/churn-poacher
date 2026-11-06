@@ -26,6 +26,14 @@ class QueryInterpretation(BaseModel):
     evidence_notes: str
     buying_intent_distinction: str
 
+    @property
+    def employee_min(self) -> Optional[int]:
+        return self.headcount_min
+
+    @property
+    def employee_max(self) -> Optional[int]:
+        return self.headcount_max
+
 
 class CrustdataQueryInterpreter:
     """
@@ -66,16 +74,16 @@ class CrustdataQueryInterpreter:
     }
 
     ROLE_PATTERNS = [
-        (r"\b(cto|chief technology officer)\b", "CTO"),
-        (r"\b(cio|chief information officer)\b", "CIO"),
-        (r"\b(ciso|chief information security officer)\b", "CISO"),
-        (r"\b(vp\s+of\s+engineering|vp\s+engineering|vice\s+president\s+engineering)\b", "VP Engineering"),
-        (r"\b(director\s+of\s+engineering|engineering\s+director)\b", "Director of Engineering"),
-        (r"\b(head\s+of\s+engineering)\b", "Head of Engineering"),
-        (r"\b(head\s+of\s+infrastructure|vp\s+infrastructure)\b", "Head of Infrastructure"),
-        (r"\b(sre\s+lead|site\s+reliability\s+engineer)\b", "Site Reliability Engineer"),
-        (r"\b(observability\s+engineer)\b", "Observability Engineer"),
-        (r"\b(devops\s+engineer|devops\s+lead)\b", "DevOps Engineer"),
+        (r"\b(ctos?|chief\s+technology\s+officers?)\b", "CTO"),
+        (r"\b(cios?|chief\s+information\s+officers?)\b", "CIO"),
+        (r"\b(cisos?|chief\s+information\s+security\s+officers?)\b", "CISO"),
+        (r"\b(vps?\s+of\s+engineering|vps?\s+engineering|vice\s+presidents?\s+engineering)\b", "VP Engineering"),
+        (r"\b(directors?\s+of\s+engineering|engineering\s+directors?)\b", "Director of Engineering"),
+        (r"\b(heads?\s+of\s+engineering)\b", "Head of Engineering"),
+        (r"\b(heads?\s+of\s+infrastructure|vps?\s+infrastructure)\b", "Head of Infrastructure"),
+        (r"\b(sre\s+leads?|site\s+reliability\s+engineers?)\b", "Site Reliability Engineer"),
+        (r"\b(observability\s+engineers?)\b", "Observability Engineer"),
+        (r"\b(devops\s+engineers?|devops\s+leads?)\b", "DevOps Engineer"),
     ]
 
     @classmethod
@@ -84,7 +92,7 @@ class CrustdataQueryInterpreter:
 
         # 1. Detect target entity type
         is_person_query = bool(
-            re.search(r"\b(cto|vp|vice president|director|engineer|officer|founder|ceo|executives?|people|person)\b", q_lower)
+            re.search(r"\b(ctos?|vps?|vice\s+presidents?|directors?|engineers?|officers?|founders?|ceos?|executives?|people|person|leads?)\b", q_lower)
             or re.search(r"\b(find|who is|show)\s+[A-Z][a-z]+\s+[A-Z][a-z]+", query)
         )
         is_job_query = bool(
@@ -113,15 +121,27 @@ class CrustdataQueryInterpreter:
 
         # 4. Extract employee / headcount range
         hc_min, hc_max = None, None
-        # Pattern like "200-1000 employees" or "200 to 1000 employees" or "200–1000"
-        hc_match = re.search(r"(\d+)\s*(?:–|-|to)\s*(\d+)\s*(?:employees)?", q_lower)
+        # Pattern 1: "200-1000 employees" or "200 to 1000 employees" or "200–1000"
+        hc_match = re.search(r"(\d+)\s*(?:–|-|to)\s*(\d+)", q_lower)
         if hc_match:
             hc_min = int(hc_match.group(1))
             hc_max = int(hc_match.group(2))
-        elif re.search(r"\b(large engineering teams?|large enterprise)\b", q_lower):
-            hc_min = 500
-        elif re.search(r"\b(small business|startup)\b", q_lower):
-            hc_max = 200
+        else:
+            # Pattern 2: "more than 500", "over 500", "> 500", "at least 500"
+            gt_match = re.search(r"(?:more than|greater than|over|above|at least|>=|>)\s*(\d+)", q_lower)
+            if gt_match:
+                hc_min = int(gt_match.group(1))
+
+            # Pattern 3: "less than 500", "under 500", "< 500", "at most 500"
+            lt_match = re.search(r"(?:less than|under|below|at most|<=|<)\s*(\d+)", q_lower)
+            if lt_match:
+                hc_max = int(lt_match.group(1))
+
+        if hc_min is None and hc_max is None:
+            if re.search(r"\b(large engineering teams?|large enterprise)\b", q_lower):
+                hc_min = 500
+            elif re.search(r"\b(small business|startup)\b", q_lower):
+                hc_max = 200
 
         # 5. Extract role / job title
         job_title = None
@@ -135,8 +155,12 @@ class CrustdataQueryInterpreter:
         comp_match = re.search(r"\b(?:at|for|of|in)\s+([A-Z][A-Za-z0-9&\.\-]+(?:\s+[A-Z][A-Za-z0-9&\.\-]+)?)", query)
         if comp_match:
             candidate_comp = comp_match.group(1).strip()
-            # Verify candidate_comp is not a country or tech
-            if candidate_comp.lower() not in cls.COUNTRY_MAP and candidate_comp.lower() not in cls.KNOWN_TECH_MAP:
+            # Verify candidate_comp is not a country or tech or common filler
+            if (
+                candidate_comp.lower() not in cls.COUNTRY_MAP
+                and candidate_comp.lower() not in cls.KNOWN_TECH_MAP
+                and candidate_comp.lower() not in ("companies", "startups", "firms", "enterprises")
+            ):
                 company_name = candidate_comp
 
         # If it's a simple search for a known company like "NVIDIA" or "OpenAI" without keywords:
@@ -149,7 +173,7 @@ class CrustdataQueryInterpreter:
         industry = None
         if "saas" in q_lower:
             industry = "SaaS"
-        elif "fintech" in q_lower:
+        elif "fintech" in q_lower or "finance" in q_lower or "financial" in q_lower:
             industry = "Financial Services / FinTech"
         elif "healthcare" in q_lower:
             industry = "Healthcare"
@@ -172,6 +196,13 @@ class CrustdataQueryInterpreter:
                     "type": "(.)",
                     "value": company_name,
                 })
+            if detected_tech:
+                # Filter on profile headline mentioning the technology stack
+                conditions.append({
+                    "field": "basic_profile.headline",
+                    "type": "(.)",
+                    "value": detected_tech[0],
+                })
             if country:
                 conditions.append({
                     "field": "basic_profile.location.country",
@@ -179,8 +210,7 @@ class CrustdataQueryInterpreter:
                     "value": country,
                 })
             # If plain name search without title/company
-            if not job_title and not company_name:
-                # Use query as person name
+            if not job_title and not company_name and not detected_tech:
                 person_clean = re.sub(r"^(find|search|lookup|who is)\s+", "", query, flags=re.IGNORECASE).strip()
                 conditions.append({
                     "field": "basic_profile.name",
@@ -221,6 +251,14 @@ class CrustdataQueryInterpreter:
                     "field": "headcount.total",
                     "type": "=<",
                     "value": hc_max,
+                })
+
+            if industry:
+                ind_val = "Fintech" if "FinTech" in industry else industry
+                conditions.append({
+                    "field": "basic_info.description",
+                    "type": "(.)",
+                    "value": ind_val,
                 })
 
             if detected_tech:

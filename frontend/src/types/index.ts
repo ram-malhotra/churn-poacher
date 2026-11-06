@@ -332,6 +332,14 @@ export interface CrustdataCreditsInfo {
   checked_at: string;
 }
 
+export interface CriterionMatch {
+  criterion: string;
+  requested_value: string;
+  actual_value?: string | null;
+  status: "VERIFIED" | "INFERRED" | "UNAVAILABLE";
+  evidence?: string | null;
+}
+
 export interface EntityCandidate {
   candidate_id: string;
   entity_type: CrustdataEntityType;
@@ -353,6 +361,9 @@ export interface EntityCandidate {
   buying_intent_status?: string;
   buying_intent_note?: string | null;
   provenance?: Record<string, string>;
+  field_verification?: Record<string, string>;
+  matched_criteria?: CriterionMatch[];
+  raw_data?: Record<string, any> | null;
 }
 
 export interface EntitySearchResponse {
@@ -365,6 +376,10 @@ export interface EntitySearchResponse {
   data_origin?: "LIVE" | "CACHED" | "DEMO";
   interpretation?: any;
   buying_intent_distinction?: string | null;
+  next_cursor?: string | null;
+  total_results?: number | null;
+  page_size?: number;
+  current_page?: number;
 }
 
 export interface TechnographicItem {

@@ -194,6 +194,14 @@ async def get_financial_analysis(
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
 
+    # If persisted in dossier, reuse for consistency
+    dossier_res = await db.execute(
+        select(DepositionDossier).where(DepositionDossier.company_id == company_id)
+    )
+    dossier = dossier_res.scalar_one_or_none()
+    if dossier and dossier.financial_delta and "report" in dossier.financial_delta:
+        return FinancialDeltaReport(**dossier.financial_delta["report"])
+
     signal_res = await db.execute(select(Signal).where(Signal.id == company.signal_id))
     signal = signal_res.scalar_one_or_none()
     return await FinOpsAgent.generate_financial_analysis(company, signal)
@@ -209,4 +217,13 @@ async def get_architecture_blueprint(
     company = company_res.scalar_one_or_none()
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
+
+    # If persisted in dossier, return the persisted blueprint for consistency
+    dossier_res = await db.execute(
+        select(DepositionDossier).where(DepositionDossier.company_id == company_id)
+    )
+    dossier = dossier_res.scalar_one_or_none()
+    if dossier and dossier.migration_blueprint:
+        return ArchitectureMigrationBlueprint(**dossier.migration_blueprint)
+
     return await ArchitectureAgent.generate_migration_blueprint(company)

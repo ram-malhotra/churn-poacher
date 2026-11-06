@@ -110,6 +110,30 @@ async def get_copywriter_drafts(
     )
     dossier = dossier_res.scalar_one_or_none()
     if not dossier or not dossier.outreach_drafts:
+        comp_res = await db.execute(select(Company).where(Company.id == company_id))
+        company = comp_res.scalar_one_or_none()
+        if not company:
+            raise HTTPException(
+                status_code=404, 
+                detail="Company not found."
+            )
+        try:
+            await CopywriterAgent.run_and_persist(
+                company_id=company_id,
+                target_challenger="SigNoz Cloud",
+                db=db,
+            )
+            dossier_res = await db.execute(
+                select(DepositionDossier).where(DepositionDossier.company_id == company_id)
+            )
+            dossier = dossier_res.scalar_one_or_none()
+        except Exception as e:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No outreach drafts found for this company and auto-generation failed: {str(e)}"
+            )
+
+    if not dossier or not dossier.outreach_drafts:
         raise HTTPException(
             status_code=404, 
             detail="No outreach drafts found for this company. Run /copywriter/run first."
