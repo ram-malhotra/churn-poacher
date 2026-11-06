@@ -34,7 +34,8 @@ async def clean_database():
             await conn.execute(text("DELETE FROM intelligence_entities;"))
             await conn.execute(text("DELETE FROM crustdata_budget_history;"))
             await conn.execute(text("DELETE FROM crustdata_budget_ledgers;"))
+            await conn.execute(text("DELETE FROM campaigns;"))
             await conn.execute(text("PRAGMA foreign_keys = ON;"))
         else:
-            await conn.execute(text("TRUNCATE TABLE workflow_executions, deposition_dossiers, companies, signals, agent_execution_logs, intelligence_evidence, intelligence_searches, intelligence_entities, crustdata_budget_history, crustdata_budget_ledgers CASCADE;"))
+            await conn.execute(text("TRUNCATE TABLE workflow_executions, deposition_dossiers, companies, signals, agent_execution_logs, intelligence_evidence, intelligence_searches, intelligence_entities, crustdata_budget_history, crustdata_budget_ledgers, campaigns CASCADE;"))
     yield

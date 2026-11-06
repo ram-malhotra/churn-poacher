@@ -1,7 +1,7 @@
 """
 Objective Natural Language Interpreter.
-Translates unstructured user opportunity descriptions into structured search criteria
-and tailored public listener search queries without inventing unspecified criteria.
+Translates unstructured user opportunity descriptions into structured search criteria,
+dynamic multi-vendor targeting, and tailored public listener search queries without inventing unspecified criteria.
 """
 
 import re
@@ -16,10 +16,12 @@ class TargetCompanySize(BaseModel):
 
 class ObjectiveCriteria(BaseModel):
     raw_objective: str = Field(..., description="Original user prompt or description")
+    campaign_name: str = Field(default="Competitive Takeout Campaign", description="Generated or configured campaign title")
+    target_vendor: str = Field(default="Datadog", description="Primary incumbent vendor targeted")
+    target_vendors: List[str] = Field(default_factory=lambda: ["Datadog"], description="All target competitor vendors identified")
     target_geography: List[str] = Field(default_factory=list, description="Target countries or regions")
     target_company_size: Optional[TargetCompanySize] = Field(None, description="Employee headcount range")
     target_industry: Optional[str] = Field(None, description="Specific target industry if mentioned")
-    target_vendor: str = Field(default="Datadog", description="Primary incumbent vendor targeted")
     pain_points: List[str] = Field(default_factory=list, description="Targeted pain points / dissatisfaction themes")
     migration_intent: bool = Field(default=False, description="Whether migration or replacement intent is specified")
     alternative_technologies: List[str] = Field(default_factory=list, description="Alternative or challenger technologies")
@@ -64,6 +66,8 @@ class ObjectiveInterpreter:
         (r"\b(opentelemetry|otel)\b", "OpenTelemetry"),
         (r"\b(grafana|grafana\s+cloud|mimir|loki|tempo)\b", "Grafana"),
         (r"\b(signoz|signoz\s+cloud)\b", "SigNoz"),
+        (r"\b(elastic|elasticsearch|elastic\s+cloud)\b", "Elastic"),
+        (r"\b(opensearch)\b", "OpenSearch"),
         (r"\b(prometheus)\b", "Prometheus"),
         (r"\b(hyperdx)\b", "HyperDX"),
         (r"\b(jaeger)\b", "Jaeger"),
@@ -74,9 +78,9 @@ class ObjectiveInterpreter:
     # Competitor vendors
     VENDOR_PATTERNS = [
         (r"\b(datadog)\b", "Datadog"),
+        (r"\b(splunk)\b", "Splunk"),
         (r"\b(new\s*relic)\b", "New Relic"),
         (r"\b(dynatrace)\b", "Dynatrace"),
-        (r"\b(splunk)\b", "Splunk"),
         (r"\b(appdynamics)\b", "AppDynamics"),
         (r"\b(sumo\s*logic)\b", "Sumo Logic"),
     ]
@@ -87,19 +91,25 @@ class ObjectiveInterpreter:
         if not text or not text.strip():
             return ObjectiveCriteria(
                 raw_objective="",
+                campaign_name="Datadog → SigNoz / Grafana",
+                target_vendor="Datadog",
+                target_vendors=["Datadog"],
                 search_queries=["datadog pricing", "datadog opentelemetry", "datadog outage"],
-                filter_summary="Default Datadog discovery across public sources.",
+                filter_summary="Default discovery across public sources.",
             )
 
         q = text.strip()
         q_lower = q.lower()
 
-        # 1. Target Vendor
-        target_vendor = "Datadog"
+        # 1. Target Vendors
+        matched_vendors: List[str] = []
         for pattern, vendor in cls.VENDOR_PATTERNS:
             if re.search(pattern, q_lower):
-                target_vendor = vendor
-                break
+                if vendor not in matched_vendors:
+                    matched_vendors.append(vendor)
+
+        target_vendor = matched_vendors[0] if matched_vendors else "Datadog"
+        target_vendors = matched_vendors if matched_vendors else ["Datadog"]
 
         # 2. Target Geography
         geographies: List[str] = []
@@ -110,7 +120,6 @@ class ObjectiveInterpreter:
 
         # 3. Headcount / Company Size Range
         target_company_size: Optional[TargetCompanySize] = None
-        # Range formats: 200–5000, 200-5000, 200 to 5000
         range_match = re.search(r"(\d+)\s*(?:-|–|to)\s*(\d+)\s*(?:employees|people|heads|headcount)?", q_lower)
         if range_match:
             min_val = int(range_match.group(1))
@@ -119,12 +128,10 @@ class ObjectiveInterpreter:
                 min_val, max_val = max_val, min_val
             target_company_size = TargetCompanySize(min=min_val, max=max_val)
         else:
-            # Format: > 500, more than 500, 500+
             more_than = re.search(r"(?:>|more\s+than|greater\s+than|\+)\s*(\d+)", q_lower) or re.search(r"(\d+)\s*\+\s*(?:employees|people)?", q_lower)
             if more_than:
                 target_company_size = TargetCompanySize(min=int(more_than.group(1)), max=None)
             else:
-                # Format: < 500, less than 500
                 less_than = re.search(r"(?:<|less\s+than|under)\s*(\d+)", q_lower)
                 if less_than:
                     target_company_size = TargetCompanySize(min=None, max=int(less_than.group(1)))
@@ -138,9 +145,9 @@ class ObjectiveInterpreter:
 
         # 5. Pain Points
         pain_points: List[str] = []
-        if re.search(r"\b(high\s+costs?|costly|expensive|overpriced|spend|spending|bill|billing|price|pricing)\b", q_lower):
+        if re.search(r"\b(high\s+costs?|costly|expensive|overpriced|spend|spending|bill|billing|price|pricing|license|licensing|indexing\s+fees?|overage)\b", q_lower):
             pain_points.append("HIGH_OBSERVABILITY_COSTS")
-        if re.search(r"\b(unexpected\s+bill|billing\s+increases?|billing\s+shocks?|invoice\s+shock|overage)\b", q_lower):
+        if re.search(r"\b(unexpected\s+bill|billing\s+increases?|billing\s+shocks?|invoice\s+shock|unpredictable)\b", q_lower):
             pain_points.append("UNEXPECTED_BILLING_INCREASES")
         if re.search(r"\b(outages?|downtime|unreliable|incident|service\s+disruption)\b", q_lower):
             pain_points.append("OUTAGES_AND_DOWNTIME")
@@ -151,7 +158,7 @@ class ObjectiveInterpreter:
 
         # 6. Migration Intent
         migration_intent = bool(
-            re.search(r"\b(migrat(e|ing|ion)|switch(ing)?|replac(e|ing)|churn(ing)?|move|moving\s+to|alternative|ditching|leaving)\b", q_lower)
+            re.search(r"\b(migrat(e|ing|ion)|switch(ing)?|replac(e|ing)|churn(ing)?|move|moving\s+to|alternative|ditching|leaving|evaluat(e|ing))\b", q_lower)
         )
 
         # 7. Alternative Technologies
@@ -164,48 +171,51 @@ class ObjectiveInterpreter:
         # 8. Priority Signals
         priority_signals: List[str] = []
         if "HIGH_OBSERVABILITY_COSTS" in pain_points or "UNEXPECTED_BILLING_INCREASES" in pain_points:
-            priority_signals.append("Pricing & Unexpected Billing Complaints")
+            priority_signals.append(f"{target_vendor} Pricing & License Cost Concerns")
         if migration_intent or alternatives:
             tech_str = "/".join(alternatives) if alternatives else "Open Source"
             priority_signals.append(f"Migration Discussions to {tech_str}")
         if "OUTAGES_AND_DOWNTIME" in pain_points:
-            priority_signals.append("Recent Incidents & Outage Frustrations")
+            priority_signals.append(f"{target_vendor} Service Disruptions & Incidents")
         if "PERFORMANCE_AND_OVERHEAD" in pain_points:
-            priority_signals.append("Performance Degradation Reports")
+            priority_signals.append(f"{target_vendor} Overhead & Performance Issues")
 
-        # 9. Build Tailored Listener Search Queries
+        # 9. Build Dynamic Campaign Name
+        if alternatives:
+            alt_str = " / ".join(alternatives[:2])
+            campaign_name = f"{target_vendor} → {alt_str}"
+        elif migration_intent:
+            campaign_name = f"{target_vendor} Displacement Campaign"
+        else:
+            campaign_name = f"{target_vendor} Takeout Campaign"
+
+        # 10. Build Tailored Listener Search Queries
         search_queries: List[str] = []
-        vendor_slug = target_vendor.lower()
+        for v in target_vendors:
+            v_slug = v.lower()
+            if "HIGH_OBSERVABILITY_COSTS" in pain_points or "UNEXPECTED_BILLING_INCREASES" in pain_points:
+                search_queries.append(f"{v_slug} pricing")
+                search_queries.append(f"{v_slug} cost")
 
-        if "HIGH_OBSERVABILITY_COSTS" in pain_points or "UNEXPECTED_BILLING_INCREASES" in pain_points:
-            search_queries.append(f"{vendor_slug} pricing")
-            search_queries.append(f"{vendor_slug} bill")
+            for alt in alternatives:
+                search_queries.append(f"{v_slug} {alt.lower()}")
 
-        if migration_intent or "OpenTelemetry" in alternatives:
-            search_queries.append(f"{vendor_slug} opentelemetry")
-        if "Grafana" in alternatives:
-            search_queries.append(f"{vendor_slug} grafana")
-        if "SigNoz" in alternatives:
-            search_queries.append(f"{vendor_slug} signoz")
-        if migration_intent and not alternatives:
-            search_queries.append(f"{vendor_slug} migration")
+            if migration_intent and not alternatives:
+                search_queries.append(f"{v_slug} migration")
 
-        if "OUTAGES_AND_DOWNTIME" in pain_points:
-            search_queries.append(f"{vendor_slug} outage")
+            if "OUTAGES_AND_DOWNTIME" in pain_points:
+                search_queries.append(f"{v_slug} outage")
 
-        # Fallback if no specific queries matched
-        if not search_queries:
-            search_queries = [
-                f"{vendor_slug} pricing",
-                f"{vendor_slug} opentelemetry",
-                f"{vendor_slug} outage",
-            ]
+            # Defaults if empty
+            if not search_queries:
+                search_queries.append(f"{v_slug} pricing")
+                search_queries.append(f"{v_slug} migration")
 
         # Deduplicate search queries while preserving order
         deduped_queries = list(dict.fromkeys(search_queries))
 
-        # 10. Filter summary string
-        summary_parts = [f"Vendor: {target_vendor}"]
+        # 11. Filter summary string
+        summary_parts = [f"Target: {', '.join(target_vendors)}"]
         if geographies:
             summary_parts.append(f"Geography: {', '.join(geographies)}")
         if target_company_size:
@@ -226,10 +236,12 @@ class ObjectiveInterpreter:
 
         return ObjectiveCriteria(
             raw_objective=text,
+            campaign_name=campaign_name,
+            target_vendor=target_vendor,
+            target_vendors=target_vendors,
             target_geography=geographies,
             target_company_size=target_company_size,
             target_industry=target_industry,
-            target_vendor=target_vendor,
             pain_points=pain_points,
             migration_intent=migration_intent,
             alternative_technologies=alternatives,

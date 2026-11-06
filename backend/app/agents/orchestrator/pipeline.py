@@ -122,11 +122,15 @@ class PipelineRunner:
                 objective = workflow.input_payload.get("objective")
                 parsed_criteria: Optional[Dict[str, Any]] = workflow.input_payload.get("parsed_criteria")
                 search_queries: Optional[List[str]] = None
+                target_vendors: Optional[List[str]] = workflow.input_payload.get("target_vendors")
                 if objective and not parsed_criteria:
                     criteria = ObjectiveInterpreter.interpret(objective)
                     parsed_criteria = criteria.model_dump()
                     search_queries = criteria.search_queries
+                    target_vendors = criteria.target_vendors
                     workflow.input_payload["parsed_criteria"] = parsed_criteria
+                    workflow.input_payload["target_vendors"] = target_vendors
+                    workflow.input_payload["alternative_vendors"] = criteria.alternative_technologies
                     out_p = dict(workflow.output_payload or {})
                     out_p["objective"] = objective
                     out_p["parsed_criteria"] = parsed_criteria
@@ -134,6 +138,8 @@ class PipelineRunner:
                     await db.commit()
                 elif parsed_criteria:
                     search_queries = parsed_criteria.get("search_queries")
+                    if not target_vendors:
+                        target_vendors = parsed_criteria.get("target_vendors")
 
                 listener = ListenerAgent()
                 include_synth = workflow.input_payload.get("include_synthetic", False)
@@ -143,6 +149,7 @@ class PipelineRunner:
                     max_items_per_source=5,
                     queries=search_queries,
                     objective_criteria=parsed_criteria,
+                    target_vendors=target_vendors,
                 )
 
                 # Persist source execution telemetry
@@ -465,10 +472,16 @@ class PipelineRunner:
             workflow.current_step = WorkflowStep.COPYWRITER.value
             await db.commit()
 
+            primary_vendor = "Datadog"
+            target_vendors = workflow.input_payload.get("target_vendors")
+            if target_vendors and len(target_vendors) > 0:
+                primary_vendor = target_vendors[0]
+
             copywriter_res = await CopywriterAgent.run_and_persist(
                 company_id=company.id,
                 target_challenger=workflow.target_challenger,
                 db=db,
+                target_vendor=primary_vendor,
             )
 
             cls._record_step(

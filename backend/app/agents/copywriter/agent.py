@@ -35,6 +35,7 @@ class CopywriterAgent:
         arch_data: Optional[Dict[str, Any]] = None,
         target_challenger: str = "SigNoz Cloud",
         include_llm_polish: bool = False,
+        target_vendor: str = "Datadog",
     ) -> OutreachPackage:
         """Generates the complete audited outreach collateral package."""
         company_data = {
@@ -61,6 +62,7 @@ class CopywriterAgent:
             company_data=company_data,
             signal_data=signal_data,
             target_challenger=target_challenger,
+            target_vendor=target_vendor,
         )
 
         # 2. Generate Collateral Modules
@@ -152,6 +154,7 @@ class CopywriterAgent:
         target_challenger: str = "SigNoz Cloud",
         db: Optional[AsyncSession] = None,
         include_llm_polish: bool = False,
+        target_vendor: str = "Datadog",
     ) -> Dict[str, Any]:
         """
         Loads Company, Signal, and DepositionDossier; generates outreach package;
@@ -187,6 +190,7 @@ class CopywriterAgent:
             arch_data=arch_data,
             target_challenger=target_challenger,
             include_llm_polish=include_llm_polish,
+            target_vendor=target_vendor,
         )
 
         package_dict = package.model_dump(mode="json")

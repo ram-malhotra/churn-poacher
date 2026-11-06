@@ -38,20 +38,20 @@ import { ObjectiveCriteria, SourceExecutionSummary } from "@/types";
 
 const SAMPLE_PROMPTS = [
   {
-    label: "Pricing & OpenTelemetry",
-    text: "Find companies discussing Datadog pricing concerns or migration to OpenTelemetry.",
-  },
-  {
-    label: "High Costs (US & India, 200–5000 emp)",
+    label: "Datadog → SigNoz / Grafana",
     text: "Find companies in the US and India experiencing high Datadog observability costs, unexpected billing increases, performance issues, or outages. Prioritize companies discussing migration to OpenTelemetry, Grafana, or SigNoz. Focus on companies with 200–5000 employees.",
   },
   {
-    label: "Outages & Downtime",
-    text: "Find companies frustrated by recent Datadog outages or service degradations considering Grafana or SigNoz alternatives.",
+    label: "Splunk → Elastic / OpenSearch",
+    text: "Find enterprise companies suffering from massive Splunk license cost overruns and indexing fees. Prioritize teams evaluating migrations to Elastic or OpenSearch.",
   },
   {
-    label: "Fintech & SaaS Cost Shocks",
-    text: "Find SaaS and Fintech companies facing unexpected Datadog billing increases with more than 500 employees.",
+    label: "New Relic → Grafana / OpenTelemetry",
+    text: "Find engineering teams frustrated with New Relic full-platform user billing and considering migrations to Grafana Cloud and OpenTelemetry.",
+  },
+  {
+    label: "Dynatrace → Grafana / OpenTelemetry",
+    text: "Find enterprise organizations looking to replace Dynatrace host-unit pricing with OpenTelemetry-native monitoring.",
   },
 ];
 
@@ -140,6 +140,7 @@ export default function OverviewPage() {
       queryClient.invalidateQueries({ queryKey: ["recentWorkflows"] });
       queryClient.invalidateQueries({ queryKey: ["listenerSources"] });
       queryClient.invalidateQueries({ queryKey: ["statsSummary"] });
+      queryClient.invalidateQueries({ queryKey: ["activeCampaign"] });
     },
   });
 
@@ -156,7 +157,7 @@ export default function OverviewPage() {
     <div className="flex-1 flex flex-col min-w-0">
       <Header
         title="Intelligence Overview"
-        description="Objective-driven opportunity discovery and competitive takeout against Datadog."
+        description="Discover competitor weaknesses, identify high-intent prospects, and automate evidence-backed customer acquisition."
       />
 
       <div className="p-6 space-y-6 max-w-7xl mx-auto w-full">

@@ -80,6 +80,34 @@ class CentralOrchestrator:
             if sig:
                 is_synthetic = sig.is_synthetic
 
+        # 2b. Campaign creation or resolution
+        campaign = None
+        if request.objective:
+            from app.services.campaign_service import CampaignService
+            campaign = await CampaignService.create_or_update_from_objective(
+                db=db,
+                objective=request.objective,
+                monitoring_mode=getattr(request, "monitoring_mode", "ON_DEMAND") or "ON_DEMAND",
+            )
+        else:
+            from app.services.campaign_service import CampaignService
+            campaign = await CampaignService.get_active_campaign(db)
+            if campaign:
+                campaign.last_executed_at = datetime.now(timezone.utc)
+                await db.commit()
+
+        target_challenger = request.target_challenger
+        if campaign and campaign.alternative_vendors and (not request.target_challenger or request.target_challenger in ("SigNoz Cloud", "SigNoz")):
+            target_challenger = campaign.alternative_vendors[0]
+
+        input_payload = request.model_dump()
+        if campaign:
+            input_payload["campaign_id"] = campaign.id
+            input_payload["target_vendors"] = campaign.target_vendors
+            input_payload["alternative_vendors"] = campaign.alternative_vendors
+            if not input_payload.get("objective") and campaign.original_objective:
+                input_payload["objective"] = campaign.original_objective
+
         # 3. Create initial WorkflowExecution entry
         workflow = WorkflowExecution(
             workflow_type=workflow_type,
@@ -87,10 +115,10 @@ class CentralOrchestrator:
             current_step="INIT",
             signal_id=request.signal_id,
             company_id=request.company_id,
-            target_challenger=request.target_challenger,
+            target_challenger=target_challenger,
             max_retries=request.max_retries,
             step_history=[],
-            input_payload=request.model_dump(),
+            input_payload=input_payload,
             output_payload={},
             is_synthetic=is_synthetic,
         )

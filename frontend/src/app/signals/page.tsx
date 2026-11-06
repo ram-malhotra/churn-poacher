@@ -67,7 +67,7 @@ export default function SignalMonitorPage() {
     <div className="flex-1 flex flex-col min-w-0">
       <Header
         title="Signal Monitor"
-        description="Real-time multi-source listening stream tracking Datadog outages, price spikes, and customer dissatisfaction."
+        description="Real-time multi-source listening stream tracking competitor outages, price spikes, and customer dissatisfaction."
       />
 
       <div className="p-6 space-y-6 max-w-7xl mx-auto w-full">

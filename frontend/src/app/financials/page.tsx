@@ -51,7 +51,7 @@ export default function FinancialAnalysisPage() {
     <div className="flex-1 flex flex-col min-w-0">
       <Header
         title="Financial Delta Intelligence"
-        description="Granular telemetry expenditure comparisons, TCO projections, and the Datadog Tax breakdown."
+        description="Granular telemetry expenditure comparisons, TCO projections, and competitor licensing tax breakdowns."
       />
 
       <div className="p-6 space-y-6 max-w-7xl mx-auto w-full">

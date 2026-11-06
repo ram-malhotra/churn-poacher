@@ -47,13 +47,14 @@ class ExecutiveEmailWriter:
             f"Benchmarking {company_name}'s telemetry run-rate vs {target_challenger}",
         ]
 
-        exec_preheader = f"Modeled potential savings of ~{savings_str}/year by migrating from Datadog to {target_challenger}."
+        target_vendor = context.get("target_vendor", "Datadog")
+        exec_preheader = f"Modeled potential savings of ~{savings_str}/year by migrating from {target_vendor} to {target_challenger}."
 
         exec_body = f"""Hi Team,
 
 In our engineering work benchmarking observability architectures for scaling {context['industry'].lower()} infrastructure, we frequently encounter teams grappling with {primary_pain}.
 
-Based on typical infrastructure profiles in your tier, our telemetry FinOps model indicates {company_name} could realize an **estimated {savings_pct:.0f}% annual savings (~{savings_str}/yr)** by transitioning monitoring workloads from Datadog to **{challenger_tech}**.
+Based on typical infrastructure profiles in your tier, our telemetry FinOps model indicates {company_name} could realize an **estimated {savings_pct:.0f}% annual savings (~{savings_str}/yr)** by transitioning monitoring workloads from {target_vendor} to **{challenger_tech}**.
 
 Three technical pillars make this feasible without operational disruption:
 1. **Zero-Code Agent Ingestion**: The OpenTelemetry Collector includes a native Datadog trace receiver on port `:8126`, ingesting existing `dd-trace` traffic with zero application code rewrites.

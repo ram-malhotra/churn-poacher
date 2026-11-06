@@ -28,14 +28,15 @@ class LinkedInWriter:
         savings_str = f"${annual_savings:,.0f}"
 
         # -------------------------------------------------------------
+        target_vendor = context.get("target_vendor", "Datadog")
         # Touch 1: Connection Request (< 300 chars strictly)
         # -------------------------------------------------------------
         # Keep crisp, respectful, relevant
-        step_1 = f"Hi — following your team's work at {company_name}. We've been analyzing telemetry architectures and open standards migrations from Datadog to {target_challenger}. Would love to connect and share insights on dual-shipping patterns."
+        step_1 = f"Hi — following your team's work at {company_name}. We've been analyzing telemetry architectures and open standards migrations from {target_vendor} to {target_challenger}. Would love to connect and share insights on dual-shipping patterns."
 
         # Safety clamp to guarantee under 300 characters
         if len(step_1) > 295:
-            step_1 = f"Hi — following {company_name}'s infrastructure work. We benchmark telemetry architectures and open standards transitions from Datadog to {target_challenger}. Glad to connect."
+            step_1 = f"Hi — following {company_name}'s infrastructure work. We benchmark telemetry architectures and open standards transitions from {target_vendor} to {target_challenger}. Glad to connect."
 
         assert len(step_1) <= 300, f"LinkedIn connection note exceeds 300 chars: {len(step_1)}"
 

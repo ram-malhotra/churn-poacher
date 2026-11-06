@@ -583,3 +583,27 @@ export interface SourceExecutionSummary {
   errors: string[];
   notes?: string | null;
 }
+
+export interface Campaign {
+  id: string;
+  name: string;
+  original_objective: string;
+  target_vendors: string[];
+  alternative_vendors: string[];
+  geography: string[];
+  company_size?: { min?: number | null; max?: number | null } | null;
+  industry?: string | null;
+  pain_points: string[];
+  migration_intent: boolean;
+  monitoring_mode: string;
+  status: string;
+  is_active: boolean;
+  last_executed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CampaignListResponse {
+  total: number;
+  campaigns: Campaign[];
+}

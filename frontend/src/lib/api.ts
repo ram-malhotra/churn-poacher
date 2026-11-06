@@ -17,6 +17,8 @@ import {
   BudgetHistoryItem,
   ObjectiveCriteria,
   SourceExecutionSummary,
+  Campaign,
+  CampaignListResponse,
 } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -310,6 +312,29 @@ export const api = {
     return request("/crustdata/export", {
       method: "POST",
       body: JSON.stringify({ entity_id, export_format }),
+    });
+  },
+
+  // Campaigns
+  async getActiveCampaign(): Promise<Campaign | null> {
+    return request("/campaigns/active");
+  },
+
+  async listCampaigns(params: { limit?: number; offset?: number } = {}): Promise<CampaignListResponse> {
+    const qs = buildQueryString(params);
+    return request(`/campaigns${qs}`);
+  },
+
+  async createCampaign(data: Partial<Campaign>): Promise<Campaign> {
+    return request("/campaigns", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  async activateCampaign(campaignId: string): Promise<Campaign> {
+    return request(`/campaigns/${campaignId}/activate`, {
+      method: "POST",
     });
   },
 

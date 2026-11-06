@@ -138,6 +138,7 @@ class ListenerAgent:
         max_items_per_source: int = 10,
         queries: Optional[List[str]] = None,
         objective_criteria: Optional[Dict[str, Any]] = None,
+        target_vendors: Optional[List[str]] = None,
     ) -> IngestionSummary:
         """
         Runs a complete signal detection, normalization, classification, and persistence cycle
@@ -161,37 +162,57 @@ class ListenerAgent:
             f"queries={search_queries})..."
         )
 
+        target_vendors_list = target_vendors or (objective_criteria.get("target_vendors") if objective_criteria else None)
+        is_datadog_targeted = True
+        if target_vendors_list:
+            is_datadog_targeted = any("datadog" in str(v).lower() for v in target_vendors_list)
+
         # -------------------------------------------------------------
-        # 1. Datadog Status Page
+        # 1. Datadog Status Page (Only polled when Datadog is targeted)
         # -------------------------------------------------------------
-        status_src_summary = SourceExecutionSummary(
-            source_name="Datadog Status",
-            connection_status="CONNECTED",
-            monitoring_status="SCANNING",
-            last_successful_scan=None,
-            records_retrieved=0,
-            relevant_signals=0,
-            errors=[],
-            notes="Polls official public Datadog Statuspage incidents & RSS",
-        )
-        try:
-            dd_meta = await self.datadog_status.fetch_signals_with_meta()
-            status_signals = dd_meta.get("signals", [])
-            status_src_summary.records_retrieved = dd_meta.get("records_retrieved", len(status_signals))
-            status_src_summary.relevant_signals = len(status_signals[:max_items_per_source])
-            status_src_summary.errors = dd_meta.get("errors", [])
-            status_src_summary.monitoring_status = "COMPLETED"
-            status_src_summary.last_successful_scan = datetime.now(timezone.utc)
-            collected_signals.extend(status_signals[:max_items_per_source])
-            logger.info(f"Fetched {len(status_signals)} signals from Datadog Status")
-        except Exception as e:
-            msg = f"Datadog Status fetch error: {str(e)}"
-            logger.error(msg)
-            status_src_summary.connection_status = "ERROR"
-            status_src_summary.monitoring_status = "FAILED"
-            status_src_summary.errors.append(msg)
-            summary.errors.append(msg)
-        summary.sources.append(status_src_summary)
+        if not is_datadog_targeted and target_vendors_list:
+            v_names = ", ".join(target_vendors_list)
+            status_src_summary = SourceExecutionSummary(
+                source_name="Datadog Status",
+                connection_status="CONNECTED",
+                monitoring_status="SKIPPED",
+                last_successful_scan=None,
+                records_retrieved=0,
+                relevant_signals=0,
+                errors=[],
+                notes=f"Target vendor is {v_names}, skipping Datadog Statuspage",
+            )
+            summary.sources.append(status_src_summary)
+            logger.info(f"Skipping Datadog Statuspage as target vendor is {v_names}")
+        else:
+            status_src_summary = SourceExecutionSummary(
+                source_name="Datadog Status",
+                connection_status="CONNECTED",
+                monitoring_status="SCANNING",
+                last_successful_scan=None,
+                records_retrieved=0,
+                relevant_signals=0,
+                errors=[],
+                notes="Polls official public Datadog Statuspage incidents & RSS",
+            )
+            try:
+                dd_meta = await self.datadog_status.fetch_signals_with_meta()
+                status_signals = dd_meta.get("signals", [])
+                status_src_summary.records_retrieved = dd_meta.get("records_retrieved", len(status_signals))
+                status_src_summary.relevant_signals = len(status_signals[:max_items_per_source])
+                status_src_summary.errors = dd_meta.get("errors", [])
+                status_src_summary.monitoring_status = "COMPLETED"
+                status_src_summary.last_successful_scan = datetime.now(timezone.utc)
+                collected_signals.extend(status_signals[:max_items_per_source])
+                logger.info(f"Fetched {len(status_signals)} signals from Datadog Status")
+            except Exception as e:
+                msg = f"Datadog Status fetch error: {str(e)}"
+                logger.error(msg)
+                status_src_summary.connection_status = "ERROR"
+                status_src_summary.monitoring_status = "FAILED"
+                status_src_summary.errors.append(msg)
+                summary.errors.append(msg)
+            summary.sources.append(status_src_summary)
 
         # -------------------------------------------------------------
         # 2. Hacker News Algolia Search API
